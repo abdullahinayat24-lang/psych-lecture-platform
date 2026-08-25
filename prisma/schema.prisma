@@ -1,0 +1,539 @@
+// ============================================================
+// Psychology Lecture Knowledge Platform - Database Schema
+// PostgreSQL via Prisma. Migration-friendly, fully normalized.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------
+// AUTH / USERS
+// ------------------------------------------------------------
+
+enum Role {
+  TEACHER
+  STUDENT
+}
+
+model User {
+  id            String   @id @default(cuid())
+  // Unique login identifier — never expose sequential/guessable IDs in URLs.
+  username      String   @unique
+  email         String?  @unique
+  displayName   String
+  passwordHash  String
+  role          Role     @default(STUDENT)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions          Session[]
+  lecturesCreated   Lecture[]           @relation("LectureCreatedBy")
+  transcriptEdits   TranscriptSegment[] @relation("TranscriptEditedBy")
+  manualMarkers     ManualMarker[]
+  studentNotes      StudentNote[]
+  studentQuestions  StudentQuestion[]
+  teacherAnswers    TeacherAnswer[]
+  studentConfusions StudentConfusion[]
+  bookmarks         Bookmark[]
+  highlights        Highlight[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+  passwordResets    PasswordResetToken[]
+
+  @@index([role])
+}
+
+// Server-side session store (works with NextAuth database strategy;
+// swappable for a managed auth provider later without schema change
+// to the rest of the app).
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// ------------------------------------------------------------
+// LECTURES / RECORDINGS
+// ------------------------------------------------------------
+
+enum LectureStatus {
+  DRAFT
+  RECORDING
+  PROCESSING
+  AI_ANALYZED
+  IN_REVIEW
+  PUBLISHED
+  UNPUBLISHED
+}
+
+enum LectureLanguage {
+  ENGLISH
+  URDU
+  PUNJABI
+  MIXED_URDU_ENGLISH
+  MIXED_PUNJABI_ENGLISH
+}
+
+model Lecture {
+  id              String          @id @default(cuid())
+  title           String
+  description     String?
+  category        String?
+  primaryLanguage LectureLanguage @default(MIXED_URDU_ENGLISH)
+  plannedDuration Int?            // seconds; informational only, never a hard cap
+  actualDuration  Int?            // seconds, set on STOP & SAVE
+  status          LectureStatus   @default(DRAFT)
+  lectureDate     DateTime        @default(now())
+
+  createdById String
+  createdBy   User   @relation("LectureCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  publishedAt DateTime?
+
+  recordings        LectureRecording[]
+  speakers          Speaker[]
+  transcriptSegments TranscriptSegment[]
+  lectureTopics      LectureTopic[]
+  topicOccurrences    TopicOccurrence[]
+  aiAnalyses         AiAnalysis[]
+  summaries          LectureSummary[]
+  manualMarkers      ManualMarker[]
+  studentNotes       StudentNote[]
+  studentQuestions   StudentQuestion[]
+  studentConfusions  StudentConfusion[]
+  bookmarks          Bookmark[]
+  highlights         Highlight[]
+
+  @@index([status])
+  @@index([lectureDate])
+  @@index([createdById])
+}
+
+// One logical recording per lecture (even across pause/resume),
+// composed of ordered, independently-persisted segments so no
+// audio is lost on disconnect.
+model LectureRecording {
+  id         String   @id @default(cuid())
+  lectureId  String
+  lecture    Lecture  @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  storageKey String   // final merged audio file location (via StorageProvider)
+  mimeType   String   @default("audio/webm")
+  totalDurationSec Int?
+  isFinalized Boolean @default(false) // true only after STOP & SAVE
+  createdAt  DateTime @default(now())
+  finalizedAt DateTime?
+
+  segments RecordingSegment[]
+
+  @@index([lectureId])
+}
+
+// Individual MediaRecorder chunks persisted as they arrive, so a
+// browser crash/disconnect loses at most one chunk, not the lecture.
+model RecordingSegment {
+  id                 String           @id @default(cuid())
+  recordingId        String
+  recording          LectureRecording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  sequenceIndex       Int
+  storageKey          String
+  startOffsetSec      Float
+  durationSec         Float?
+  status              String           @default("uploaded") // uploaded | failed | merged
+  createdAt           DateTime         @default(now())
+
+  @@unique([recordingId, sequenceIndex])
+  @@index([recordingId])
+}
+
+// ------------------------------------------------------------
+// SPEAKERS / DIARIZATION
+// ------------------------------------------------------------
+
+enum SpeakerRole {
+  TEACHER
+  STUDENT
+  UNKNOWN
+}
+
+model Speaker {
+  id            String      @id @default(cuid())
+  lectureId     String
+  lecture       Lecture     @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  // raw diarization label e.g. "SPEAKER_00" before the teacher renames it
+  rawLabel      String
+  displayName   String      // e.g. "Teacher", "Student 1" — editable
+  role          SpeakerRole @default(UNKNOWN)
+  linkedUserId  String?     // optional: map to an actual student account
+  createdAt     DateTime    @default(now())
+
+  segments TranscriptSegment[]
+
+  @@unique([lectureId, rawLabel])
+  @@index([lectureId])
+}
+
+// ------------------------------------------------------------
+// STRUCTURED TRANSCRIPT
+// ------------------------------------------------------------
+
+enum SegmentType {
+  TEACHER_EXPLANATION
+  STUDENT_QUESTION
+  TEACHER_ANSWER
+  DISCUSSION
+  EXAMPLE
+  IMPORTANT
+  OTHER
+}
+
+model TranscriptSegment {
+  id           String      @id @default(cuid())
+  lectureId    String
+  lecture      Lecture     @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  speakerId    String?
+  speaker      Speaker?    @relation(fields: [speakerId], references: [id], onDelete: SetNull)
+  speakerRole  SpeakerRole @default(UNKNOWN)
+  startTimeSec Float
+  endTimeSec   Float
+  text         String      @db.Text
+  translatedText String?   @db.Text // optional English translation layer; never overwrites original
+  language     LectureLanguage
+  confidence   Float?
+  segmentType  SegmentType @default(OTHER)
+  isEdited     Boolean     @default(false)
+  editedById   String?
+  editedBy     User?       @relation("TranscriptEditedBy", fields: [editedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  topicOccurrences  TopicOccurrence[]
+  studentNotes      StudentNote[]
+  studentQuestions  StudentQuestion[]
+  studentConfusions StudentConfusion[]
+  highlights        Highlight[]
+
+  @@index([lectureId, startTimeSec])
+  @@index([segmentType])
+}
+
+// ------------------------------------------------------------
+// TOPICS (global knowledge graph)
+// ------------------------------------------------------------
+
+model Topic {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  slug        String   @unique
+  overview    String?  @db.Text // teacher-curated / approved AI synthesis
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lectureTopics    LectureTopic[]
+  occurrences      TopicOccurrence[]
+  relatedFrom      TopicRelation[]   @relation("TopicRelationFrom")
+  relatedTo        TopicRelation[]   @relation("TopicRelationTo")
+  studentNotes     StudentNote[]
+  studentQuestions StudentQuestion[]
+  bookmarks        Bookmark[]
+
+  @@index([slug])
+}
+
+// Many-to-many: which lectures touch which topics
+model LectureTopic {
+  id         String   @id @default(cuid())
+  lectureId  String
+  lecture    Lecture  @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  topicId    String
+  topic      Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  source     String   @default("ai") // ai | teacher
+  approved   Boolean  @default(false) // teacher must approve AI-suggested topic links
+  createdAt  DateTime @default(now())
+
+  @@unique([lectureId, topicId])
+  @@index([topicId])
+  @@index([lectureId])
+}
+
+// A specific moment where a topic is discussed — the clickable
+// timestamp entries described in section 11.
+model TopicOccurrence {
+  id                  String              @id @default(cuid())
+  topicId             String
+  topic               Topic               @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  lectureId           String
+  lecture             Lecture             @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  transcriptSegmentId String?
+  transcriptSegment   TranscriptSegment?  @relation(fields: [transcriptSegmentId], references: [id], onDelete: SetNull)
+  timestampSec        Float
+  label               String              // short description, e.g. "Childhood experiences and narcissistic behaviour"
+  source              String              @default("ai") // ai | teacher
+  approved            Boolean             @default(false)
+  createdAt           DateTime            @default(now())
+
+  @@index([topicId, timestampSec])
+  @@index([lectureId])
+}
+
+model TopicRelation {
+  id           String @id @default(cuid())
+  fromTopicId  String
+  fromTopic    Topic  @relation("TopicRelationFrom", fields: [fromTopicId], references: [id], onDelete: Cascade)
+  toTopicId    String
+  toTopic      Topic  @relation("TopicRelationTo", fields: [toTopicId], references: [id], onDelete: Cascade)
+  relationType String @default("related") // related | prerequisite | contrasts_with
+
+  @@unique([fromTopicId, toTopicId])
+  @@index([fromTopicId])
+  @@index([toTopicId])
+}
+
+// ------------------------------------------------------------
+// AI ANALYSIS (always tagged as INTERPRETATION, never SOURCE)
+// ------------------------------------------------------------
+
+enum AiAnalysisType {
+  SUMMARY_DETAILED
+  SUMMARY_SHORT
+  REVISION_NOTES
+  KEY_CONCEPTS
+  IMPORTANT_POINTS
+  QUESTIONS_EXTRACTED
+  ANSWERS_EXTRACTED
+  EXAMPLES_EXTRACTED
+  DEFINITIONS_EXTRACTED
+  TOPIC_EXTRACTION
+  UNCLEAR_SECTIONS
+  CONTRADICTIONS
+  STUDY_QUESTIONS
+  FLASHCARDS
+  LECTURE_OUTLINE
+}
+
+model AiAnalysis {
+  id          String         @id @default(cuid())
+  lectureId   String
+  lecture     Lecture        @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  type        AiAnalysisType
+  // Structured JSON payload specific to `type`; see src/types/ai.ts
+  content     Json
+  modelUsed   String
+  approvedByTeacher Boolean  @default(false)
+  reviewedById String?
+  createdAt   DateTime       @default(now())
+
+  @@index([lectureId, type])
+}
+
+model LectureSummary {
+  id         String   @id @default(cuid())
+  lectureId  String
+  lecture    Lecture  @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  kind       String   // "short" | "detailed"
+  content    String   @db.Text
+  isApproved Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@index([lectureId, kind])
+}
+
+// ------------------------------------------------------------
+// QUESTIONS / TEACHER ANSWERS ("I didn't understand" pipeline)
+// ------------------------------------------------------------
+
+model StudentConfusion {
+  id                  String             @id @default(cuid())
+  studentId           String
+  student             User               @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lectureId           String
+  lecture             Lecture            @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  transcriptSegmentId String?
+  transcriptSegment   TranscriptSegment? @relation(fields: [transcriptSegmentId], references: [id], onDelete: SetNull)
+  timestampSec        Float
+  comment             String?            @db.Text
+  aiExplanation        Json?              // simple/detailed explanation, example, related concept
+  submittedToTeacher   Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+
+  @@index([studentId])
+  @@index([lectureId])
+  @@index([lectureId, timestampSec])
+}
+
+model StudentQuestion {
+  id                  String             @id @default(cuid())
+  studentId           String
+  student             User               @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lectureId           String
+  lecture             Lecture            @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  topicId             String?
+  topic               Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  transcriptSegmentId String?
+  transcriptSegment   TranscriptSegment? @relation(fields: [transcriptSegmentId], references: [id], onDelete: SetNull)
+  timestampSec        Float?
+  text                String             @db.Text
+  submittedToTeacher  Boolean            @default(false)
+  submittedAt         DateTime?
+  createdAt           DateTime           @default(now())
+
+  answers TeacherAnswer[]
+
+  @@index([studentId])
+  @@index([lectureId])
+  @@index([submittedToTeacher])
+}
+
+model TeacherAnswer {
+  id                String          @id @default(cuid())
+  studentQuestionId String
+  studentQuestion   StudentQuestion @relation(fields: [studentQuestionId], references: [id], onDelete: Cascade)
+  teacherId         String
+  teacher           User            @relation(fields: [teacherId], references: [id])
+  text              String          @db.Text
+  createdAt         DateTime        @default(now())
+
+  @@index([studentQuestionId])
+}
+
+// ------------------------------------------------------------
+// MANUAL LIVE MARKERS
+// ------------------------------------------------------------
+
+enum MarkerType {
+  IMPORTANT
+  QUESTION
+  EXAMPLE
+  CONFUSING
+  RESEARCH_LATER
+  NOTE
+}
+
+model ManualMarker {
+  id           String     @id @default(cuid())
+  lectureId    String
+  lecture      Lecture    @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id])
+  timestampSec Float
+  markerType   MarkerType
+  text         String?
+  createdAt    DateTime   @default(now())
+
+  @@index([lectureId, timestampSec])
+  @@index([userId])
+}
+
+// ------------------------------------------------------------
+// STUDENT PRIVATE LAYER (strictly scoped to owner; enforced in API)
+// ------------------------------------------------------------
+
+model StudentNote {
+  id                  String             @id @default(cuid())
+  studentId           String
+  student             User               @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lectureId           String?
+  lecture             Lecture?           @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  topicId             String?
+  topic               Topic?             @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  transcriptSegmentId String?
+  transcriptSegment   TranscriptSegment? @relation(fields: [transcriptSegmentId], references: [id], onDelete: SetNull)
+  timestampSec        Float?
+  text                String             @db.Text
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@index([studentId])
+  @@index([lectureId])
+  @@index([topicId])
+}
+
+model Bookmark {
+  id           String   @id @default(cuid())
+  studentId    String
+  student      User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lectureId    String?
+  lecture      Lecture? @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  topicId      String?
+  topic        Topic?   @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  timestampSec Float?
+  label        String?
+  createdAt    DateTime @default(now())
+
+  @@index([studentId])
+  @@index([lectureId])
+  @@index([topicId])
+}
+
+model Highlight {
+  id                  String             @id @default(cuid())
+  studentId           String
+  student             User               @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lectureId           String
+  lecture             Lecture            @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  transcriptSegmentId String?
+  transcriptSegment   TranscriptSegment? @relation(fields: [transcriptSegmentId], references: [id], onDelete: SetNull)
+  startTimeSec        Float?
+  endTimeSec          Float?
+  note                String?
+  createdAt           DateTime           @default(now())
+
+  @@index([studentId])
+  @@index([lectureId])
+}
+
+// ------------------------------------------------------------
+// NOTIFICATIONS / AUDIT
+// ------------------------------------------------------------
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  payload   Json?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  actor      User     @relation(fields: [actorId], references: [id])
+  action     String   // e.g. "lecture.publish", "transcript.edit", "student.delete"
+  entityType String
+  entityId   String
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+}
