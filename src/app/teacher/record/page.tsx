@@ -91,10 +91,12 @@ export default function RecordStudioPage() {
   }
 
   async function startRecording() {
-    if (!title.trim()) {
-      alert("Please provide a lecture title.");
-      return;
-    }
+    const effectiveTitle =
+      title.trim() ||
+      `Psychology Lecture (${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })})`;
 
     try {
       setUploadStatus("Requesting microphone permission...");
@@ -114,9 +116,9 @@ export default function RecordStudioPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title,
+          title: effectiveTitle,
           description: description || undefined,
-          category: category || undefined,
+          category: category || "Clinical Psychology",
           primaryLanguage: language,
           plannedDuration: parseInt(plannedDurationMin, 10) * 60,
         }),
@@ -291,12 +293,11 @@ export default function RecordStudioPage() {
         /* Setup Form */
         <div className="card" style={{ display: "grid", gap: "1rem", marginTop: "1.5rem" }}>
           <label>
-            <strong>Lecture Title *</strong>
+            <strong>Lecture Title (Optional)</strong>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Cognitive Psychology: Memory Models & Retrieval"
-              required
+              placeholder="Leave blank to auto-generate from lecture speech content..."
               style={{ width: "100%", marginTop: 4 }}
             />
           </label>

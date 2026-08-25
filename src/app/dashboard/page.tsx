@@ -92,6 +92,14 @@ export default function DashboardPage() {
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto", padding: "2rem 1.25rem" }}>
       {/* Header */}
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "1rem", fontSize: "0.85rem" }}>
+        <Link href="/" style={{ color: "var(--color-text-muted)" }}>
+          Home
+        </Link>
+        <span style={{ color: "var(--color-border)" }}>/</span>
+        <span style={{ fontWeight: 600 }}>Dashboard</span>
+      </div>
+
       <div
         style={{
           display: "flex",
