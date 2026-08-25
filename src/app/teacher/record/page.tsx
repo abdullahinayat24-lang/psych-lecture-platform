@@ -4,6 +4,8 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 
+export const dynamic = "force-dynamic";
+
 type ManualMarkerItem = {
   timestampSec: number;
   markerType: string;

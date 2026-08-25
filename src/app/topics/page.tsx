@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 
+export const dynamic = "force-dynamic";
+
 export default function TopicsPage() {
   const { data: session } = useSession();
   const [topics, setTopics] = useState<any[]>([]);

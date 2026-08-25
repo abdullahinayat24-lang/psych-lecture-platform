@@ -4,6 +4,8 @@ import { useSession } from "next-auth/react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
+export const dynamic = "force-dynamic";
+
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const [lectures, setLectures] = useState<any[]>([]);

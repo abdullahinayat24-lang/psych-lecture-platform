@@ -5,6 +5,8 @@ import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
 
+export const dynamic = "force-dynamic";
+
 type TranscriptSegment = {
   id: string;
   startTimeSec: number;
