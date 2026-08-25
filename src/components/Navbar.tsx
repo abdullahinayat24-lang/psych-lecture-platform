@@ -25,10 +25,9 @@ export function Navbar() {
     document.documentElement.setAttribute("data-theme", next);
   }
 
-  if (pathname === "/login") return null;
-
   const role = (session?.user as any)?.role;
   const isTeacher = role === "TEACHER";
+  const isLoginPage = pathname === "/login";
 
   return (
     <header
@@ -55,10 +54,10 @@ export function Navbar() {
         {/* Brand */}
         <div style={{ display: "flex", alignItems: "center", gap: "1.5rem" }}>
           <Link
-            href="/dashboard"
+            href={session ? "/dashboard" : "/"}
             style={{
-              fontFamily: "var(--font-serif)",
-              fontSize: "1.25rem",
+              fontFamily: "var(--font-sans)",
+              fontSize: "1.15rem",
               fontWeight: 700,
               color: "var(--color-text)",
               textDecoration: "none",
@@ -69,6 +68,12 @@ export function Navbar() {
           >
             <span>Lecture Archive</span>
           </Link>
+
+          {isLoginPage && (
+            <Link href="/" style={{ fontSize: "0.88rem", color: "var(--color-text-muted)" }}>
+              ← Back to Home
+            </Link>
+          )}
 
           {/* Navigation Links */}
           {session && (

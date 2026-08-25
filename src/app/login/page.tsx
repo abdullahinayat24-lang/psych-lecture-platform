@@ -3,6 +3,9 @@
 import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
+
+export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,45 +19,125 @@ export default function LoginPage() {
     setLoading(true);
     setError(null);
 
-    const res = await signIn("credentials", { username, password, redirect: false });
+    try {
+      const res = await signIn("credentials", { username, password, redirect: false });
 
-    setLoading(false);
-    if (res?.error) {
-      setError("Invalid username or password");
-      return;
+      setLoading(false);
+      if (res?.error) {
+        setError("Invalid username or password. Please verify credentials.");
+        return;
+      }
+      router.push("/dashboard");
+      router.refresh();
+    } catch (err: any) {
+      setLoading(false);
+      setError(err.message || "Failed to sign in. Please try again.");
     }
-    router.push("/dashboard");
+  }
+
+  function fillCredentials(user: string, pass: string) {
+    setUsername(user);
+    setPassword(pass);
+    setError(null);
   }
 
   return (
-    <main style={{ maxWidth: 380, margin: "10vh auto", padding: "0 1rem" }}>
-      <h1 style={{ marginBottom: "0.25rem" }}>Lecture Archive</h1>
-      <p style={{ color: "var(--color-text-muted)", marginTop: 0 }}>Sign in to continue</p>
+    <main style={{ maxWidth: 420, margin: "6vh auto", padding: "0 1.25rem" }}>
+      {/* Back button */}
+      <div style={{ marginBottom: "1.5rem" }}>
+        <Link href="/" style={{ fontSize: "0.88rem", color: "var(--color-text-muted)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+          ← Back to Home
+        </Link>
+      </div>
 
-      <form onSubmit={handleSubmit} className="card" style={{ display: "grid", gap: "0.75rem" }}>
+      <div style={{ marginBottom: "1.25rem" }}>
+        <h1 style={{ margin: "0 0 4px", fontSize: "1.6rem" }}>Lecture Archive</h1>
+        <p style={{ color: "var(--color-text-muted)", margin: 0, fontSize: "0.92rem" }}>
+          Sign in to access clinical lectures, transcript search & private notes.
+        </p>
+      </div>
+
+      <form onSubmit={handleSubmit} className="card" style={{ display: "grid", gap: "1rem" }}>
         <label>
-          Username
+          <strong style={{ fontSize: "0.85rem" }}>Username</strong>
           <input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            placeholder="e.g. teacher or student1"
             required
-            style={{ width: "100%", padding: "0.5rem", marginTop: 4 }}
+            autoFocus
+            style={{ width: "100%", marginTop: 4 }}
           />
         </label>
+
         <label>
-          Password
+          <strong style={{ fontSize: "0.85rem" }}>Password</strong>
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            placeholder="••••••••••••"
             required
-            style={{ width: "100%", padding: "0.5rem", marginTop: 4 }}
+            style={{ width: "100%", marginTop: 4 }}
           />
         </label>
-        {error && <p style={{ color: "crimson", margin: 0 }}>{error}</p>}
-        <button type="submit" className="primary" disabled={loading} style={{ padding: "0.6rem" }}>
-          {loading ? "Signing in…" : "Sign in"}
+
+        {error && (
+          <div
+            style={{
+              padding: "0.6rem 0.8rem",
+              background: "var(--color-danger-bg)",
+              color: "var(--color-danger-text)",
+              borderRadius: "var(--radius)",
+              fontSize: "0.85rem",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <button type="submit" className="primary" disabled={loading} style={{ padding: "0.65rem" }}>
+          {loading ? "Signing in..." : "Sign in to Platform"}
         </button>
+
+        {/* Quick 1-Click Demo Logins */}
+        <div style={{ borderTop: "1px solid var(--color-border)", paddingTop: "1rem", marginTop: "0.5rem" }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--color-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.6rem" }}>
+            1-Click Demo Logins:
+          </div>
+
+          <div style={{ display: "grid", gap: "0.5rem" }}>
+            <button
+              type="button"
+              className="sm"
+              onClick={() => fillCredentials("teacher", "ChangeMe123!")}
+              style={{ justifyContent: "space-between", textAlign: "left" }}
+            >
+              <span>👨‍🏫 <strong>Instructor</strong> (Dr. Ahmed)</span>
+              <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>Fill</span>
+            </button>
+
+            <button
+              type="button"
+              className="sm"
+              onClick={() => fillCredentials("student1", "ChangeMe123!")}
+              style={{ justifyContent: "space-between", textAlign: "left" }}
+            >
+              <span>🎓 <strong>Student 1</strong> (Zainab Khan)</span>
+              <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>Fill</span>
+            </button>
+
+            <button
+              type="button"
+              className="sm"
+              onClick={() => fillCredentials("student2", "ChangeMe123!")}
+              style={{ justifyContent: "space-between", textAlign: "left" }}
+            >
+              <span>🎓 <strong>Student 2</strong> (Bilal Tariq)</span>
+              <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>Fill</span>
+            </button>
+          </div>
+        </div>
       </form>
     </main>
   );
