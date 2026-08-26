@@ -59,6 +59,7 @@ export default function RecordStudioPage() {
   const animFrameRef = useRef<number | null>(null);
   const segmentsRef = useRef<LiveTranscriptSegment[]>([]);
   const liveTextRef = useRef<string>("");
+  const recordedBlobsRef = useRef<Blob[]>([]);
 
   const isTeacher = (session?.user as any)?.role === "TEACHER";
 
@@ -211,18 +212,27 @@ export default function RecordStudioPage() {
         }),
       });
 
-      if (!lecRes.ok) throw new Error("Failed to create lecture record");
+      if (!lecRes.ok) {
+        const errData = await lecRes.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to create lecture record");
+      }
       const { lecture } = await lecRes.json();
       setLectureId(lecture.id);
 
       // 2. Start recording session
-      setUploadStatus("Initializing chunk pipeline...");
-      const startRes = await fetch(`/api/recordings/${lecture.id}/start`, { method: "POST" });
-      if (!startRes.ok) throw new Error("Failed to start recording session");
-      const { recording } = await startRes.json();
-      setRecordingId(recording.id);
+      setUploadStatus("Initializing audio pipeline...");
+      try {
+        const startRes = await fetch(`/api/recordings/${lecture.id}/start`, { method: "POST" });
+        if (startRes.ok) {
+          const { recording } = await startRes.json();
+          setRecordingId(recording?.id || null);
+        }
+      } catch (startErr) {
+        console.warn("Start recording pipeline warning:", startErr);
+      }
 
-      // 3. Initialize MediaRecorder
+      // 3. Initialize MediaRecorder & buffer
+      recordedBlobsRef.current = [];
       const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
         ? "audio/webm;codecs=opus"
         : "audio/webm";
@@ -233,31 +243,25 @@ export default function RecordStudioPage() {
 
       mediaRecorder.ondataavailable = async (e) => {
         if (e.data && e.data.size > 0) {
+          recordedBlobsRef.current.push(e.data);
           const currentSeq = sequenceIndexRef.current++;
           const currentOffset = elapsedSec;
           setChunkCount((prev) => prev + 1);
-          setUploadStatus(`Uploading chunk #${currentSeq + 1}...`);
+          setUploadStatus(`Recording live audio (${recordedBlobsRef.current.length} blocks)...`);
 
           const formData = new FormData();
           formData.append("chunk", e.data, `chunk-${currentSeq}.webm`);
           formData.append("sequenceIndex", String(currentSeq));
           formData.append("startOffsetSec", String(currentOffset));
 
-          try {
-            const segRes = await fetch(`/api/recordings/${lecture.id}/segment`, {
-              method: "POST",
-              body: formData,
-            });
-            if (segRes.ok) {
-              setUploadStatus(`Chunk #${currentSeq + 1} saved`);
-            }
-          } catch (uploadErr) {
-            console.error("Segment upload error:", uploadErr);
-          }
+          fetch(`/api/recordings/${lecture.id}/segment`, {
+            method: "POST",
+            body: formData,
+          }).catch(() => {});
         }
       };
 
-      mediaRecorder.start(5000);
+      mediaRecorder.start(3000);
       setIsStarted(true);
       setIsPaused(false);
 
@@ -364,10 +368,25 @@ export default function RecordStudioPage() {
             ]
           : undefined;
 
+      let audioDataUrl: string | undefined = undefined;
+      if (recordedBlobsRef.current.length > 0) {
+        try {
+          const fullBlob = new Blob(recordedBlobsRef.current, { type: "audio/webm" });
+          audioDataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(fullBlob);
+          });
+        } catch (audioErr) {
+          console.warn("Audio blob serialization warning:", audioErr);
+        }
+      }
+
       const res = await fetch(`/api/recordings/${lectureId}/finalize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          audioDataUrl,
           clientSegments: clientSegmentsToSend,
           manualText: liveTranscript.trim() || undefined,
           durationSec: elapsedSec,

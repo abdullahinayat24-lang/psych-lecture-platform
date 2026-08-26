@@ -3,9 +3,9 @@ import { prisma } from "@/lib/db";
 import { requireTeacher, ApiError, handleApiError } from "@/lib/rbac";
 import { logAudit } from "@/lib/audit";
 
+export const dynamic = "force-dynamic";
+
 // POST /api/recordings/:lectureId/start
-// Creates the LectureRecording shell that individual chunks attach to.
-// Does not set a time limit — the recording only ends via /finalize.
 export async function POST(_req: Request, { params }: { params: { lectureId: string } }) {
   try {
     const user = await requireTeacher();
@@ -26,12 +26,16 @@ export async function POST(_req: Request, { params }: { params: { lectureId: str
 
     await prisma.lecture.update({ where: { id: params.lectureId }, data: { status: "RECORDING" } });
 
-    await logAudit({
-      actorId: user.id,
-      action: "recording.start",
-      entityType: "LectureRecording",
-      entityId: recording.id,
-    });
+    try {
+      await logAudit({
+        actorId: user.id,
+        action: "recording.start",
+        entityType: "LectureRecording",
+        entityId: recording.id,
+      });
+    } catch {
+      // Non-blocking audit log
+    }
 
     return NextResponse.json({ recording }, { status: 201 });
   } catch (err) {

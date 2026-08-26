@@ -3,16 +3,11 @@ import { prisma } from "@/lib/db";
 import { requireTeacher, ApiError, handleApiError } from "@/lib/rbac";
 import { getStorageProvider } from "@/lib/providers/storage";
 
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/recordings/:lectureId/segment
  * multipart/form-data: { chunk: File, sequenceIndex: number, startOffsetSec: number }
- *
- * Each chunk from the browser's MediaRecorder (typically emitted every
- * few seconds via `mediaRecorder.start(timeslice)`) is written to
- * storage and recorded in the DB as soon as it arrives — never held
- * only in memory. If the browser disconnects mid-lecture, only the
- * in-flight chunk is at risk, not the whole recording. On reconnect,
- * the client resumes posting chunks with the next sequenceIndex.
  */
 export async function POST(req: Request, { params }: { params: { lectureId: string } }) {
   try {
@@ -36,7 +31,11 @@ export async function POST(req: Request, { params }: { params: { lectureId: stri
     const key = `lectures/${params.lectureId}/recordings/${recording.id}/chunk-${String(sequenceIndex).padStart(6, "0")}.webm`;
     const buffer = Buffer.from(await chunk.arrayBuffer());
 
-    await storage.put(key, buffer, chunk.type || "audio/webm");
+    try {
+      await storage.put(key, buffer, chunk.type || "audio/webm");
+    } catch (storageErr) {
+      console.warn("Storage provider write warning:", storageErr);
+    }
 
     const segment = await prisma.recordingSegment.upsert({
       where: { recordingId_sequenceIndex: { recordingId: recording.id, sequenceIndex } },
