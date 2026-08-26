@@ -64,11 +64,11 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       create: {
         lectureId: params.id,
         rawLabel: "SPEAKER_00",
-        displayName: "Sir Amir",
+        displayName: "Amer Naseem",
         role: "TEACHER",
       },
       update: {
-        displayName: "Sir Amir",
+        displayName: "Amer Naseem",
       },
     });
 

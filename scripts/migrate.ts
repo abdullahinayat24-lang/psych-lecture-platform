@@ -1,18 +1,18 @@
 import { prisma } from "../src/lib/db";
 
 async function main() {
-  console.log("Running DDL migration...");
-  await prisma.$executeRawUnsafe(`
-    ALTER TABLE "LectureRecording" ADD COLUMN IF NOT EXISTS "audioBase64" TEXT;
-  `);
-  console.log("Migration executed successfully!");
-
-  // Update teacher name to Sir Amir
-  const updated = await prisma.user.updateMany({
+  // Update teacher name to Amer Naseem
+  const updatedUser = await prisma.user.updateMany({
     where: { username: "teacher" },
-    data: { displayName: "Sir Amir" },
+    data: { displayName: "Amer Naseem" },
   });
-  console.log("Updated teacher displayName to Sir Amir:", updated);
+  console.log("Updated teacher displayName to Amer Naseem:", updatedUser);
+
+  const updatedSpeaker = await prisma.speaker.updateMany({
+    where: { role: "TEACHER" },
+    data: { displayName: "Amer Naseem" },
+  });
+  console.log("Updated speakers to Amer Naseem:", updatedSpeaker);
 }
 
 main()

@@ -488,20 +488,66 @@ export default function TeacherReviewPage() {
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <Link href={`/lectures/${lecture.id}`}>
-            <button>🎧 Student View</button>
-          </Link>
-          <button className={isPublished ? "danger" : "primary"} onClick={togglePublish}>
-            {isPublished ? "🔒 Unpublish Lecture" : "📢 Publish to Students"}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            className="primary"
+            onClick={togglePublish}
+            style={{
+              padding: "0.65rem 1.4rem",
+              fontWeight: 700,
+              fontSize: "0.95rem",
+              backgroundColor: isPublished ? "#4b5563" : "#16a34a",
+              color: "#fff",
+              border: "none",
+            }}
+          >
+            {isPublished ? "🔒 Unpublish (Make Draft)" : "📢 1-Click Publish to Students"}
           </button>
+          <Link href={`/lectures/${lecture.id}`}>
+            <button style={{ padding: "0.65rem 1.1rem" }}>🎧 Preview Player</button>
+          </Link>
           <button className="danger sm" onClick={handleDeleteLecture} title="Permanently delete lecture">
-            🗑️ Delete
+            🗑️ Delete Lecture
           </button>
         </div>
       </div>
 
       <div style={{ display: "grid", gap: "2rem" }}>
+        {analyses.length === 0 && (
+          <div
+            className="card"
+            style={{
+              backgroundColor: "rgba(99, 102, 241, 0.08)",
+              border: "1.5px solid #6366f1",
+              padding: "1rem 1.25rem",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "1rem",
+            }}
+          >
+            <div>
+              <h3 style={{ margin: "0 0 4px", color: "#4f46e5" }}>🤖 1-Click Gemini AI Study Notes</h3>
+              <p style={{ margin: 0, fontSize: "0.88rem", color: "var(--color-text-muted)" }}>
+                Automatically generate bulleted notes, key concepts, Urdu/Punjabi topic links, and flashcards.
+              </p>
+            </div>
+            <button
+              className="primary"
+              disabled={isAnalyzing}
+              onClick={runAiPipeline}
+              style={{
+                backgroundColor: "#4f46e5",
+                color: "#fff",
+                fontWeight: 600,
+                padding: "0.65rem 1.3rem",
+              }}
+            >
+              {isAnalyzing ? "⚡ Generating with Gemini..." : "⚡ Generate AI Notes (1-Click)"}
+            </button>
+          </div>
+        )}
         {/* 🖼️ Whiteboard & Board Photos Section */}
         <section className="card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>

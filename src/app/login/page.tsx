@@ -113,7 +113,7 @@ export default function LoginPage() {
               onClick={() => fillCredentials("teacher", "ChangeMe123!")}
               style={{ justifyContent: "space-between", textAlign: "left" }}
             >
-              <span>👨‍🏫 <strong>Instructor</strong> (Sir Amir)</span>
+              <span>👨‍🏫 <strong>Instructor</strong> (Amer Naseem)</span>
               <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>Fill</span>
             </button>
 

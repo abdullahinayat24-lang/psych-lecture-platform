@@ -519,9 +519,9 @@ export default function RecordStudioPage() {
         <span style={{ fontWeight: 600 }}>Recording Studio</span>
       </div>
 
-      <h1 style={{ marginBottom: "0.25rem" }}>🎙️ Live Lecture Recording Studio</h1>
+      <h1 style={{ marginBottom: "0.25rem" }}>🎙️ Amer Naseem&apos;s Recording Studio</h1>
       <p style={{ color: "var(--color-text-muted)", marginTop: 0 }}>
-        Continuous audio capture with real-time speech recognition, 10-hour IndexedDB disk fail-safe, and automatic clinical topic indexing.
+        1-Click live speech capture in Urdu, Punjabi &amp; English with 10-hour disk backup.
       </p>
 
       {recoverableSession && (
@@ -537,10 +537,10 @@ export default function RecordStudioPage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
             <div>
               <h3 style={{ margin: "0 0 4px", color: "#a16207" }}>
-                🛡️ 10-Hour Fail-Safe: Unsaved Session Recovered!
+                🛡️ 10-Hour Fail-Safe: Unsaved Lecture Found on Disk
               </h3>
               <p style={{ margin: 0, fontSize: "0.9rem", color: "var(--color-text-muted)" }}>
-                Detected {recoverableSession.chunks?.length || 0} audio blocks (~{Math.round((recoverableSession.durationSec || 60) / 60)} mins) preserved on your disk.
+                Recovered {recoverableSession.chunks?.length || 0} audio blocks (~{Math.round((recoverableSession.durationSec || 60) / 60)} mins) from earlier.
               </p>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
@@ -549,7 +549,7 @@ export default function RecordStudioPage() {
                 disabled={isRestoring}
                 onClick={() => restoreAndFinalize(recoverableSession)}
               >
-                {isRestoring ? "Restoring..." : "⚡ Restore & Finalize Now"}
+                {isRestoring ? "Restoring..." : "⚡ 1-Click Restore & Save"}
               </button>
               <button
                 className="sm danger"
@@ -564,62 +564,80 @@ export default function RecordStudioPage() {
       )}
 
       {!isStarted ? (
-        /* Setup Form */
-        <div className="card" style={{ display: "grid", gap: "1rem", marginTop: "1.5rem" }}>
+        /* Simple 1-Click Setup Form */
+        <div className="card" style={{ display: "grid", gap: "1.25rem", marginTop: "1.5rem", padding: "1.75rem" }}>
           <label>
-            <strong>Lecture Title (Optional)</strong>
+            <strong style={{ fontSize: "1rem" }}>Lecture Title (Optional)</strong>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. City College Sambrial - Covert Narcissism & Music (by Sir Amir)..."
-              style={{ width: "100%", marginTop: 4 }}
+              placeholder="e.g. Psychology, Music (Raags), CSS, or Family Dynamics by Amer Naseem..."
+              style={{ width: "100%", marginTop: 6, fontSize: "1.05rem", padding: "0.6rem 0.8rem" }}
             />
+            <span style={{ fontSize: "0.82rem", color: "var(--color-text-muted)", marginTop: 4, display: "block" }}>
+              💡 Leave blank to automatically title from what you discuss during the lecture.
+            </span>
           </label>
 
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }} className="grid-2col">
             <label>
-              <strong>Category / Module</strong>
+              <strong>Category / Subject</strong>
               <input
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                placeholder="Clinical Psychology"
+                placeholder="Psychology / Multidisciplinary"
                 style={{ width: "100%", marginTop: 4 }}
               />
             </label>
 
             <label>
-              <strong>Primary Language</strong>
+              <strong>Language Dialect</strong>
               <select
                 value={language}
                 onChange={(e) => setLanguage(e.target.value)}
                 style={{ width: "100%", marginTop: 4 }}
               >
-                <option value="MIXED_URDU_ENGLISH">Mixed Urdu & English (Recommended)</option>
-                <option value="ENGLISH">English</option>
-                <option value="URDU">Urdu</option>
+                <option value="MIXED_URDU_ENGLISH">Mixed Urdu, Punjabi &amp; English (Recommended)</option>
                 <option value="PUNJABI">Punjabi</option>
-                <option value="MIXED_PUNJABI_ENGLISH">Mixed Punjabi & English</option>
+                <option value="URDU">Urdu</option>
+                <option value="ENGLISH">English</option>
               </select>
             </label>
           </div>
 
-          <label>
-            <strong>Optional Lecture Notes / Outline (or paste text directly)</strong>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Key concepts to discuss (e.g. Narcissism, Depression, Cognitive Schemas)..."
-              rows={3}
-              style={{ width: "100%", marginTop: 4 }}
-            />
-          </label>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "1rem",
+              paddingTop: "0.75rem",
+              borderTop: "1px solid var(--color-border)",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.88rem", color: "var(--color-text-muted)" }}>
+              <span>🛡️ 10-Hour Fail-Safe Active</span>
+              <span>·</span>
+              <span>🎙️ Auto-Transcription Ready</span>
+            </div>
 
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.5rem" }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
-              No hard duration limits — speak freely until you click STOP & SAVE.
-            </span>
-            <button className="primary" onClick={startRecording} style={{ padding: "0.75rem 1.5rem", fontSize: "1rem" }}>
-              🔴 Start Live Recording
+            <button
+              className="primary"
+              onClick={startRecording}
+              style={{
+                padding: "0.85rem 2.2rem",
+                fontSize: "1.1rem",
+                fontWeight: 700,
+                backgroundColor: "#dc2626",
+                color: "#ffffff",
+                border: "none",
+                borderRadius: "var(--radius)",
+                cursor: "pointer",
+                boxShadow: "0 4px 14px rgba(220, 38, 38, 0.35)",
+              }}
+            >
+              🔴 Start Recording (1-Click)
             </button>
           </div>
         </div>

@@ -4,8 +4,8 @@ import { Providers } from "./providers";
 import { Navbar } from "@/components/Navbar";
 
 export const metadata: Metadata = {
-  title: "City College Sambrial | Lecture Archive & Knowledge Platform",
-  description: "Official lecture archive and multidisciplinary knowledge platform for City College Sambrial by Sir Amir.",
+  title: "City College Sambrial | Amer Naseem Lecture Archive",
+  description: "Official lecture archive and multidisciplinary knowledge platform for City College Sambrial by Amer Naseem.",
   manifest: "/manifest.json",
 };
 

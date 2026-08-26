@@ -80,7 +80,7 @@ export default function LecturesPage() {
         <div>
           <h1 style={{ margin: "0 0 4px" }}>🏛️ City College Sambrial — Lectures Archive</h1>
           <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-            Verbatim lectures by Sir Amir · Searchable transcripts, topic knowledge paths & AI notes.
+            Verbatim lectures by Amer Naseem · Searchable transcripts, topic knowledge paths &amp; AI notes.
           </p>
         </div>
 

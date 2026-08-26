@@ -151,17 +151,17 @@ async function processRecordingAsync(
   manualText?: string
 ) {
   try {
-    // Ensure default Teacher speaker (Sir Amir)
+    // Ensure default Teacher speaker (Amer Naseem)
     const defaultSpeaker = await prisma.speaker.upsert({
       where: { lectureId_rawLabel: { lectureId, rawLabel: "SPEAKER_00" } },
       create: {
         lectureId,
         rawLabel: "SPEAKER_00",
-        displayName: "Sir Amir",
+        displayName: "Amer Naseem",
         role: "TEACHER",
       },
       update: {
-        displayName: "Sir Amir",
+        displayName: "Amer Naseem",
       },
     });
 
