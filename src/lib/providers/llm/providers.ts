@@ -1,9 +1,66 @@
 import type { LLMProvider, LlmMessage, LlmCompletionOptions } from "../types";
 
 /**
- * Local Ollama provider — free, runs entirely on the teacher's own
- * hardware, no data leaves the machine. Default provider for this
- * deployment. Requires Ollama running with OLLAMA_MODEL pulled.
+ * Google Gemini Provider (Gemini 1.5 Flash).
+ * Massive 1-Million token context window natively designed for 10-hour lecture
+ * transcripts, mixed Urdu, English, and Punjabi understanding.
+ */
+export class GeminiProvider implements LLMProvider {
+  readonly name = "gemini_1.5_flash";
+
+  async complete(messages: LlmMessage[], options: LlmCompletionOptions = {}): Promise<string> {
+    const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+
+    if (!apiKey) throw new Error("GEMINI_API_KEY is required for Gemini provider");
+
+    const systemPrompt = messages.find((m) => m.role === "system")?.content || "";
+    const userMessages = messages.filter((m) => m.role !== "system");
+
+    const promptText = [
+      systemPrompt ? `[SYSTEM INSTRUCTION]\n${systemPrompt}\n\n` : "",
+      ...userMessages.map((m) => `[${m.role.toUpperCase()}]:\n${m.content}`),
+    ].join("\n\n");
+
+    const modelName = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+
+    const body: any = {
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: promptText }],
+        },
+      ],
+      generationConfig: {
+        temperature: options.temperature ?? 0.2,
+        maxOutputTokens: options.maxTokens ?? 4096,
+      },
+    };
+
+    if (options.jsonMode) {
+      body.generationConfig.responseMimeType = "application/json";
+    }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Gemini API error (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+    const candidate = data.candidates?.[0];
+    const text = candidate?.content?.parts?.[0]?.text ?? "";
+    return text.trim();
+  }
+}
+
+/**
+ * Local Ollama provider — free, runs on the host machine.
  */
 export class OllamaProvider implements LLMProvider {
   readonly name = "ollama_local";
