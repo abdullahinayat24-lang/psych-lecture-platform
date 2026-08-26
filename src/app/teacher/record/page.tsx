@@ -111,6 +111,7 @@ export default function RecordStudioPage() {
   const segmentsRef = useRef<LiveTranscriptSegment[]>([]);
   const liveTextRef = useRef<string>("");
   const recordedBlobsRef = useRef<Blob[]>([]);
+  const lectureIdRef = useRef<string | null>(null);
 
   const isTeacher = (session?.user as any)?.role === "TEACHER";
 
@@ -250,36 +251,34 @@ export default function RecordStudioPage() {
       setupAudioMeter(stream);
 
       // 1. Create lecture in database
-      setUploadStatus("Creating lecture entry...");
-      const lecRes = await fetch("/api/lectures", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: effectiveTitle,
-          description: description || undefined,
-          category: category || "Clinical Psychology",
-          primaryLanguage: language,
-          plannedDuration: parseInt(plannedDurationMin, 10) * 60,
-        }),
-      });
-
-      if (!lecRes.ok) {
-        const errData = await lecRes.json().catch(() => ({}));
-        throw new Error(errData.error || "Failed to create lecture record");
-      }
-      const { lecture } = await lecRes.json();
-      setLectureId(lecture.id);
-
-      // 2. Start recording session
-      setUploadStatus("Initializing audio pipeline...");
+      setUploadStatus("Initializing recording entry...");
       try {
-        const startRes = await fetch(`/api/recordings/${lecture.id}/start`, { method: "POST" });
-        if (startRes.ok) {
-          const { recording } = await startRes.json();
-          setRecordingId(recording?.id || null);
+        const lecRes = await fetch("/api/lectures", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: effectiveTitle,
+            description: description || undefined,
+            category: category || "Clinical Psychology",
+            primaryLanguage: language,
+            plannedDuration: parseInt(plannedDurationMin, 10) * 60,
+          }),
+        });
+
+        if (lecRes.ok) {
+          const { lecture } = await lecRes.json();
+          setLectureId(lecture.id);
+          lectureIdRef.current = lecture.id;
+
+          fetch(`/api/recordings/${lecture.id}/start`, { method: "POST" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => {
+              if (d?.recording?.id) setRecordingId(d.recording.id);
+            })
+            .catch(() => {});
         }
-      } catch (startErr) {
-        console.warn("Start recording pipeline warning:", startErr);
+      } catch (lecErr) {
+        console.warn("Initial lecture creation notice:", lecErr);
       }
 
       // 3. Initialize MediaRecorder & buffer
@@ -300,15 +299,17 @@ export default function RecordStudioPage() {
           setChunkCount((prev) => prev + 1);
           setUploadStatus(`Recording live audio (${recordedBlobsRef.current.length} blocks)...`);
 
-          const formData = new FormData();
-          formData.append("chunk", e.data, `chunk-${currentSeq}.webm`);
-          formData.append("sequenceIndex", String(currentSeq));
-          formData.append("startOffsetSec", String(currentOffset));
+          if (lectureIdRef.current) {
+            const formData = new FormData();
+            formData.append("chunk", e.data, `chunk-${currentSeq}.webm`);
+            formData.append("sequenceIndex", String(currentSeq));
+            formData.append("startOffsetSec", String(currentOffset));
 
-          fetch(`/api/recordings/${lecture.id}/segment`, {
-            method: "POST",
-            body: formData,
-          }).catch(() => {});
+            fetch(`/api/recordings/${lectureIdRef.current}/segment`, {
+              method: "POST",
+              body: formData,
+            }).catch(() => {});
+          }
         }
       };
 
@@ -433,7 +434,31 @@ export default function RecordStudioPage() {
         }
       }
 
-      const res = await fetch(`/api/recordings/${lectureId}/finalize`, {
+      let activeLectureId = lectureId;
+      if (!activeLectureId) {
+        const createRes = await fetch("/api/lectures", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title:
+              title.trim() ||
+              `City College Sambrial - Lecture (${new Date().toLocaleDateString("en-GB")})`,
+            description: description || undefined,
+            category: category || "Clinical Psychology",
+            primaryLanguage: language,
+            plannedDuration: parseInt(plannedDurationMin, 10) * 60,
+          }),
+        });
+        if (createRes.ok) {
+          const { lecture } = await createRes.json();
+          activeLectureId = lecture.id;
+          setLectureId(lecture.id);
+        }
+      }
+
+      if (!activeLectureId) throw new Error("Could not create lecture record on server");
+
+      const res = await fetch(`/api/recordings/${activeLectureId}/finalize`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -444,12 +469,15 @@ export default function RecordStudioPage() {
         }),
       });
 
-      if (!res.ok) throw new Error("Failed to finalize recording on server");
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to finalize recording on server");
+      }
 
-      router.push(`/teacher/review/${lectureId}`);
+      await deleteVaultSession(activeLectureId);
+      router.push(`/teacher/review/${activeLectureId}`);
     } catch (err: any) {
       console.error("Finalize error:", err);
-      // Still redirect to review if lecture exists
       if (lectureId) {
         router.push(`/teacher/review/${lectureId}`);
       } else {
