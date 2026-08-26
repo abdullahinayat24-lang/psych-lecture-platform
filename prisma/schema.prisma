@@ -147,6 +147,7 @@ model LectureRecording {
   lectureId  String
   lecture    Lecture  @relation(fields: [lectureId], references: [id], onDelete: Cascade)
   storageKey String   // final merged audio file location (via StorageProvider)
+  audioBase64 String? @db.Text // Persistent master audio data URL
   mimeType   String   @default("audio/webm")
   totalDurationSec Int?
   isFinalized Boolean @default(false) // true only after STOP & SAVE

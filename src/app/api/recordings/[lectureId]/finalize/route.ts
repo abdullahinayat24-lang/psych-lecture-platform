@@ -57,6 +57,7 @@ export async function POST(req: Request, { params }: { params: { lectureId: stri
         finalizedAt: new Date(),
         totalDurationSec: finalDuration,
         storageKey: masterKey,
+        audioBase64: body.audioDataUrl || undefined,
       },
     });
 
@@ -288,8 +289,12 @@ async function autoUpdateLectureTitle(lectureId: string, text: string) {
     const lower = text.toLowerCase();
     let smartTitle = lecture.title;
 
-    if (lower.includes("narcissis")) {
+    if (lower.includes("flying monkey") || lower.includes("flying monkeys")) {
+      smartTitle = "Psychology: Covert Narcissism, Martyrdom & Flying Monkeys";
+    } else if (lower.includes("narcissis") || lower.includes("shaheed")) {
       smartTitle = "Psychology: Narcissism, External Validation & Idealized Self-Image";
+    } else if (lower.includes("raag") || lower.includes("sur") || lower.includes("music")) {
+      smartTitle = "Music Theory: Punjabi Melodic Structures & Raag Systems";
     } else if (lower.includes("depress")) {
       smartTitle = "Clinical Psychology: Depressive Mechanisms & Cognitive Triad";
     } else if (lower.includes("anxiet")) {

@@ -81,6 +81,21 @@ export default function DashboardPage() {
     }
   }
 
+  async function handleDeleteLecture(lectureId: string, title: string) {
+    if (!confirm(`Are you sure you want to permanently delete "${title}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/lectures/${lectureId}`, { method: "DELETE" });
+      if (res.ok) {
+        setLectures((prev) => prev.filter((l) => l.id !== lectureId));
+      } else {
+        alert("Failed to delete lecture.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Error deleting lecture");
+    }
+  }
+
   if (status === "loading" || loading) {
     return (
       <main style={{ maxWidth: 1200, margin: "0 auto", padding: "2.5rem 1.25rem" }}>
@@ -221,6 +236,13 @@ export default function DashboardPage() {
                             <Link href={`/lectures/${lec.id}`}>
                               <button className="sm">Play</button>
                             </Link>
+                            <button
+                              className="sm danger"
+                              onClick={() => handleDeleteLecture(lec.id, lec.title)}
+                              title="Delete this lecture"
+                            >
+                              🗑️
+                            </button>
                           </div>
                         </td>
                       </tr>

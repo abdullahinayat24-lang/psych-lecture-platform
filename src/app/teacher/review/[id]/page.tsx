@@ -336,6 +336,22 @@ export default function TeacherReviewPage() {
     }
   }
 
+  async function handleDeleteLecture() {
+    if (!confirm(`Are you sure you want to permanently delete "${lecture?.title}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/lectures/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        alert("Lecture deleted successfully.");
+        router.push("/dashboard");
+      } else {
+        alert("Failed to delete lecture.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Error deleting lecture");
+    }
+  }
+
   function formatTime(sec: number) {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
@@ -444,12 +460,15 @@ export default function TeacherReviewPage() {
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <Link href={`/lectures/${lecture.id}`}>
             <button>🎧 Student View</button>
           </Link>
           <button className={isPublished ? "danger" : "primary"} onClick={togglePublish}>
             {isPublished ? "🔒 Unpublish Lecture" : "📢 Publish to Students"}
+          </button>
+          <button className="danger sm" onClick={handleDeleteLecture} title="Permanently delete lecture">
+            🗑️ Delete
           </button>
         </div>
       </div>
