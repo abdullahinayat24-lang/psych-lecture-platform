@@ -32,6 +32,21 @@ export default function LecturesPage() {
     })();
   }, []);
 
+  async function handleDeleteLecture(lectureId: string, title: string) {
+    if (!confirm(`Are you sure you want to permanently delete "${title}"?`)) return;
+
+    try {
+      const res = await fetch(`/api/lectures/${lectureId}`, { method: "DELETE" });
+      if (res.ok) {
+        setLectures((prev) => prev.filter((l) => l.id !== lectureId));
+      } else {
+        alert("Failed to delete lecture.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Error deleting lecture");
+    }
+  }
+
   const categories = Array.from(new Set(lectures.map((l) => l.category).filter(Boolean)));
 
   const filtered = lectures.filter((lec) => {
@@ -178,9 +193,18 @@ export default function LecturesPage() {
                   </button>
                 </Link>
                 {isTeacher && (
-                  <Link href={`/teacher/review/${lec.id}`}>
-                    <button className="sm">Review</button>
-                  </Link>
+                  <>
+                    <Link href={`/teacher/review/${lec.id}`}>
+                      <button className="sm">Review</button>
+                    </Link>
+                    <button
+                      className="sm danger"
+                      onClick={() => handleDeleteLecture(lec.id, lec.title)}
+                      title="Delete this lecture"
+                    >
+                      🗑️
+                    </button>
+                  </>
                 )}
               </div>
             </div>
