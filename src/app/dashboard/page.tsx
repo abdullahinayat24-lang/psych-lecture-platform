@@ -23,32 +23,13 @@ export default function DashboardPage() {
 
     (async () => {
       try {
-        const [lecRes, topRes, noteRes, qRes, confRes] = await Promise.all([
-          fetch("/api/lectures"),
-          fetch("/api/topics"),
-          fetch("/api/notes"),
-          fetch("/api/questions"),
-          fetch("/api/confusions"),
-        ]);
-
-        if (lecRes.ok) {
-          const d = await lecRes.json();
+        const res = await fetch("/api/dashboard/stats");
+        if (res.ok) {
+          const d = await res.json();
           setLectures(d.lectures || []);
-        }
-        if (topRes.ok) {
-          const d = await topRes.json();
           setTopics(d.topics || []);
-        }
-        if (noteRes.ok) {
-          const d = await noteRes.json();
           setMyNotes(d.notes || []);
-        }
-        if (qRes.ok) {
-          const d = await qRes.json();
           setQuestions(d.questions || []);
-        }
-        if (confRes.ok) {
-          const d = await confRes.json();
           setConfusions(d.confusions || []);
         }
       } catch (err) {
