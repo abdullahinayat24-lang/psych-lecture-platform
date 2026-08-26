@@ -57,7 +57,7 @@ export function Navbar() {
             href={session ? "/dashboard" : "/"}
             style={{
               fontFamily: "var(--font-sans)",
-              fontSize: "1.15rem",
+              fontSize: "1.1rem",
               fontWeight: 700,
               color: "var(--color-text)",
               textDecoration: "none",
@@ -66,7 +66,7 @@ export function Navbar() {
               gap: "8px",
             }}
           >
-            <span>Lecture Archive</span>
+            <span>🏛️ City College Sambrial</span>
           </Link>
 
           {isLoginPage && (

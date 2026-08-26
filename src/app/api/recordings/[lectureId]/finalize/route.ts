@@ -151,16 +151,18 @@ async function processRecordingAsync(
   manualText?: string
 ) {
   try {
-    // Ensure default Teacher speaker
+    // Ensure default Teacher speaker (Sir Amir)
     const defaultSpeaker = await prisma.speaker.upsert({
       where: { lectureId_rawLabel: { lectureId, rawLabel: "SPEAKER_00" } },
       create: {
         lectureId,
         rawLabel: "SPEAKER_00",
-        displayName: "Teacher",
+        displayName: "Sir Amir",
         role: "TEACHER",
       },
-      update: {},
+      update: {
+        displayName: "Sir Amir",
+      },
     });
 
     // 1. If client provided live-transcribed segments from the browser, prioritize them

@@ -51,9 +51,9 @@ export default function LoginPage() {
       </div>
 
       <div style={{ marginBottom: "1.25rem" }}>
-        <h1 style={{ margin: "0 0 4px", fontSize: "1.6rem" }}>Lecture Archive</h1>
+        <h1 style={{ margin: "0 0 4px", fontSize: "1.6rem" }}>🏛️ City College Sambrial</h1>
         <p style={{ color: "var(--color-text-muted)", margin: 0, fontSize: "0.92rem" }}>
-          Sign in to access clinical lectures, transcript search & private notes.
+          Sign in to access Sir Amir&apos;s lectures, transcripts & AI study notes.
         </p>
       </div>
 
@@ -97,7 +97,7 @@ export default function LoginPage() {
         )}
 
         <button type="submit" className="primary" disabled={loading} style={{ padding: "0.65rem" }}>
-          {loading ? "Signing in..." : "Sign in to Platform"}
+          {loading ? "Signing in..." : "Sign in to City College Sambrial"}
         </button>
 
         {/* Quick 1-Click Demo Logins */}
@@ -113,7 +113,7 @@ export default function LoginPage() {
               onClick={() => fillCredentials("teacher", "ChangeMe123!")}
               style={{ justifyContent: "space-between", textAlign: "left" }}
             >
-              <span>👨‍🏫 <strong>Instructor</strong> (Dr. Ahmed)</span>
+              <span>👨‍🏫 <strong>Instructor</strong> (Sir Amir)</span>
               <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>Fill</span>
             </button>
 

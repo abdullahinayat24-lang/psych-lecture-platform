@@ -64,10 +64,12 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       create: {
         lectureId: params.id,
         rawLabel: "SPEAKER_00",
-        displayName: "Teacher",
+        displayName: "Sir Amir",
         role: "TEACHER",
       },
-      update: {},
+      update: {
+        displayName: "Sir Amir",
+      },
     });
 
     if (parsed.data.replaceFull) {

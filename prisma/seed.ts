@@ -12,11 +12,11 @@ async function main() {
   // 1. Users
   const teacher = await prisma.user.upsert({
     where: { username: "teacher" },
-    update: {},
+    update: { displayName: "Sir Amir" },
     create: {
       username: "teacher",
-      displayName: "Dr. Ahmed",
-      email: "teacher@example.com",
+      displayName: "Sir Amir",
+      email: "teacher@citycollegesambrial.edu.pk",
       role: "TEACHER",
       passwordHash: await bcrypt.hash(teacherPassword, 12),
     },

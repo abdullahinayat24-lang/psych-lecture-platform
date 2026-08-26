@@ -232,7 +232,7 @@ export default function RecordStudioPage() {
   async function startRecording() {
     const effectiveTitle =
       title.trim() ||
-      `Psychology Lecture (${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], {
+      `City College Sambrial - Lecture (${new Date().toLocaleDateString("en-GB")} ${new Date().toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
       })})`;
@@ -543,7 +543,7 @@ export default function RecordStudioPage() {
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Leave blank to auto-generate from lecture speech content..."
+              placeholder="e.g. City College Sambrial - Covert Narcissism & Music (by Sir Amir)..."
               style={{ width: "100%", marginTop: 4 }}
             />
           </label>

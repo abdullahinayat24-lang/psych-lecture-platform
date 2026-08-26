@@ -78,9 +78,9 @@ export default function LecturesPage() {
         }}
       >
         <div>
-          <h1 style={{ margin: "0 0 4px" }}>Psychology Lectures Archive</h1>
+          <h1 style={{ margin: "0 0 4px" }}>🏛️ City College Sambrial — Lectures Archive</h1>
           <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-            Verbatim clinical lectures, searchable transcripts, and topic knowledge paths.
+            Verbatim lectures by Sir Amir · Searchable transcripts, topic knowledge paths & AI notes.
           </p>
         </div>
 
