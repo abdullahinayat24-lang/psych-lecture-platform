@@ -287,6 +287,33 @@ function LectureContent() {
           Recorded on {new Date(lecture.lectureDate).toLocaleDateString()}
         </p>
 
+        {/* Teacher Draft Alert */}
+        {lecture.status !== "PUBLISHED" && (
+          <div
+            className="card"
+            style={{
+              backgroundColor: "rgba(234, 179, 8, 0.12)",
+              border: "1px solid #ca8a04",
+              marginTop: "0.75rem",
+              padding: "0.75rem 1rem",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: 8,
+            }}
+          >
+            <span style={{ fontSize: "0.9rem", color: "#a16207" }}>
+              ⚠️ <strong>Teacher Preview Mode:</strong> This lecture is currently in <strong>{lecture.status}</strong> status and is invisible to students.
+            </span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Link href={`/teacher/review/${lecture.id}`}>
+                <button className="primary sm">✏️ Open Review & Publish</button>
+              </Link>
+            </div>
+          </div>
+        )}
+
         {/* Series Banner */}
         {lecture.seriesName && (
           <div style={{ marginTop: "0.5rem", padding: "0.5rem 0.85rem", background: "var(--color-surface-hover)", borderRadius: "var(--radius)", display: "inline-flex", alignItems: "center", gap: 8 }}>

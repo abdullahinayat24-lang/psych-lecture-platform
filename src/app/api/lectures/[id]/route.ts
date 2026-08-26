@@ -19,21 +19,27 @@ const updateLectureSchema = z.object({
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser();
+    let user: any = null;
+    try {
+      user = await requireUser();
+    } catch {
+      // Visitor / unauthenticated
+    }
 
     const lecture = await prisma.lecture.findUnique({
       where: { id: params.id },
       include: {
         speakers: true,
-        recordings: { where: { isFinalized: true }, orderBy: { createdAt: "desc" }, take: 1 },
+        recordings: { orderBy: { createdAt: "desc" }, take: 1 },
         lectureTopics: { where: { approved: true }, include: { topic: true } },
       },
     });
 
     if (!lecture) throw new ApiError(404, "Lecture not found");
 
-    if (user.role === "STUDENT" && lecture.status !== "PUBLISHED") {
-      throw new ApiError(404, "Lecture not found");
+    const isTeacher = user?.role === "TEACHER";
+    if (!isTeacher && lecture.status !== "PUBLISHED") {
+      throw new ApiError(403, "This lecture is currently in draft review and has not been published to students yet.");
     }
 
     return NextResponse.json({ lecture });

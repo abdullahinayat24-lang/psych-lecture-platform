@@ -187,15 +187,15 @@ export default function LecturesPage() {
               </div>
 
               <div style={{ display: "flex", gap: 8, marginTop: "0.5rem" }}>
-                <Link href={`/lectures/${lec.id}`} style={{ flex: 1 }}>
-                  <button className="primary sm" style={{ width: "100%" }}>
-                    🎧 Study & Listen
-                  </button>
-                </Link>
-                {isTeacher && (
+                {isTeacher && lec.status !== "PUBLISHED" ? (
                   <>
-                    <Link href={`/teacher/review/${lec.id}`}>
-                      <button className="sm">Review</button>
+                    <Link href={`/teacher/review/${lec.id}`} style={{ flex: 1 }}>
+                      <button className="primary sm" style={{ width: "100%" }}>
+                        ✏️ Review & Publish
+                      </button>
+                    </Link>
+                    <Link href={`/lectures/${lec.id}`}>
+                      <button className="sm" title="Preview Student Player">🎧</button>
                     </Link>
                     <button
                       className="sm danger"
@@ -204,6 +204,28 @@ export default function LecturesPage() {
                     >
                       🗑️
                     </button>
+                  </>
+                ) : (
+                  <>
+                    <Link href={`/lectures/${lec.id}`} style={{ flex: 1 }}>
+                      <button className="primary sm" style={{ width: "100%" }}>
+                        🎧 Study & Listen
+                      </button>
+                    </Link>
+                    {isTeacher && (
+                      <>
+                        <Link href={`/teacher/review/${lec.id}`}>
+                          <button className="sm">Review</button>
+                        </Link>
+                        <button
+                          className="sm danger"
+                          onClick={() => handleDeleteLecture(lec.id, lec.title)}
+                          title="Delete this lecture"
+                        >
+                          🗑️
+                        </button>
+                      </>
+                    )}
                   </>
                 )}
               </div>
