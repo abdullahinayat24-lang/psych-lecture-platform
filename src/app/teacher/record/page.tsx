@@ -4,6 +4,12 @@ import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
+import {
+  saveVaultSession,
+  getLatestUnsavedSession,
+  deleteVaultSession,
+  VaultSession,
+} from "@/lib/indexeddb-vault";
 
 export const dynamic = "force-dynamic";
 
@@ -42,11 +48,56 @@ export default function RecordStudioPage() {
   const [markers, setMarkers] = useState<ManualMarkerItem[]>([]);
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
-
-  // Live Speech Recognition & Transcripts
   const [liveTranscript, setLiveTranscript] = useState<string>("");
   const [recognizedSegments, setRecognizedSegments] = useState<LiveTranscriptSegment[]>([]);
   const [isSpeechRecActive, setIsSpeechRecActive] = useState(false);
+  const [recoverableSession, setRecoverableSession] = useState<VaultSession | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+
+  // Check for unsaved 10-hour fail-safe sessions on mount
+  useEffect(() => {
+    getLatestUnsavedSession().then((s) => {
+      if (s && s.chunks && s.chunks.length > 0) {
+        setRecoverableSession(s);
+      }
+    });
+  }, []);
+
+  async function restoreAndFinalize(sessionToRestore: VaultSession) {
+    setIsRestoring(true);
+    try {
+      let audioDataUrl: string | undefined = undefined;
+      if (sessionToRestore.chunks.length > 0) {
+        const fullBlob = new Blob(sessionToRestore.chunks, { type: "audio/webm" });
+        audioDataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(fullBlob);
+        });
+      }
+
+      await fetch(`/api/recordings/${sessionToRestore.lectureId}/finalize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          audioDataUrl,
+          manualText: sessionToRestore.transcript || undefined,
+          durationSec: sessionToRestore.durationSec || 60,
+        }),
+      });
+
+      await deleteVaultSession(sessionToRestore.lectureId);
+      router.push(`/teacher/review/${sessionToRestore.lectureId}`);
+    } catch (e: any) {
+      alert("Error restoring session: " + e.message);
+      setIsRestoring(false);
+    }
+  }
+
+  async function discardUnsavedSession(lectureIdToDiscard: string) {
+    await deleteVaultSession(lectureIdToDiscard);
+    setRecoverableSession(null);
+  }
 
   // References
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -442,8 +493,47 @@ export default function RecordStudioPage() {
 
       <h1 style={{ marginBottom: "0.25rem" }}>🎙️ Live Lecture Recording Studio</h1>
       <p style={{ color: "var(--color-text-muted)", marginTop: 0 }}>
-        Continuous audio capture with real-time speech recognition and automatic clinical topic indexing.
+        Continuous audio capture with real-time speech recognition, 10-hour IndexedDB disk fail-safe, and automatic clinical topic indexing.
       </p>
+
+      {recoverableSession && (
+        <div
+          className="card"
+          style={{
+            backgroundColor: "rgba(234, 179, 8, 0.1)",
+            border: "2px solid #ca8a04",
+            margin: "1rem 0 1.5rem",
+            padding: "1.25rem",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem" }}>
+            <div>
+              <h3 style={{ margin: "0 0 4px", color: "#a16207" }}>
+                🛡️ 10-Hour Fail-Safe: Unsaved Session Recovered!
+              </h3>
+              <p style={{ margin: 0, fontSize: "0.9rem", color: "var(--color-text-muted)" }}>
+                Detected {recoverableSession.chunks?.length || 0} audio blocks (~{Math.round((recoverableSession.durationSec || 60) / 60)} mins) preserved on your disk.
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="primary sm"
+                disabled={isRestoring}
+                onClick={() => restoreAndFinalize(recoverableSession)}
+              >
+                {isRestoring ? "Restoring..." : "⚡ Restore & Finalize Now"}
+              </button>
+              <button
+                className="sm danger"
+                disabled={isRestoring}
+                onClick={() => discardUnsavedSession(recoverableSession.lectureId)}
+              >
+                Discard
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {!isStarted ? (
         /* Setup Form */
