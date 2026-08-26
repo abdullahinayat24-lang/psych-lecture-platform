@@ -97,26 +97,41 @@ function LectureContent() {
     if (!id) return;
     (async () => {
       try {
-        const [lectureRes, transcriptRes, notesRes, aiRes, imgRes] = await Promise.all([
-          fetch(`/api/lectures/${id}`),
-          fetch(`/api/lectures/${id}/transcript`),
-          fetch(`/api/notes?lectureId=${id}`),
-          fetch(`/api/ai?lectureId=${id}`),
-          fetch(`/api/images?lectureId=${id}`),
+        const lectureRes = await fetch(`/api/lectures/${id}`);
+        if (!lectureRes.ok) {
+          if (lectureRes.status === 404) {
+            throw new Error("This lecture is currently unpublished or has been removed.");
+          }
+          const errData = await lectureRes.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to load lecture");
+        }
+
+        const lectureData = await lectureRes.json();
+        setLecture(lectureData.lecture);
+
+        const [transcriptRes, notesRes, aiRes, imgRes] = await Promise.all([
+          fetch(`/api/lectures/${id}/transcript`).catch(() => null),
+          fetch(`/api/notes?lectureId=${id}`).catch(() => null),
+          fetch(`/api/ai?lectureId=${id}`).catch(() => null),
+          fetch(`/api/images?lectureId=${id}`).catch(() => null),
         ]);
 
-        if (!lectureRes.ok) throw new Error("Failed to load lecture");
-        const lectureData = await lectureRes.json();
-        const transcriptData = await transcriptRes.json();
-        const notesData = await notesRes.json();
-        const aiData = await aiRes.json();
-        const imgData = await imgRes.json().catch(() => ({ images: [] }));
-
-        setLecture(lectureData.lecture);
-        setSegments(transcriptData.segments ?? []);
-        setNotes(notesData.notes ?? []);
-        setAiAnalyses(aiData.analyses ?? []);
-        setBoardImages(imgData.images ?? []);
+        if (transcriptRes && transcriptRes.ok) {
+          const t = await transcriptRes.json().catch(() => ({}));
+          setSegments(t.segments ?? []);
+        }
+        if (notesRes && notesRes.ok) {
+          const n = await notesRes.json().catch(() => ({}));
+          setNotes(n.notes ?? []);
+        }
+        if (aiRes && aiRes.ok) {
+          const a = await aiRes.json().catch(() => ({}));
+          setAiAnalyses(a.analyses ?? []);
+        }
+        if (imgRes && imgRes.ok) {
+          const img = await imgRes.json().catch(() => ({}));
+          setBoardImages(img.images ?? []);
+        }
 
         // Check if query timestamp exists e.g. ?t=140
         const tParam = searchParams.get("t");
