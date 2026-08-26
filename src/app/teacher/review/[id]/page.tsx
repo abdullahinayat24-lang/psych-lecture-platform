@@ -6,6 +6,14 @@ import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
+type BoardImageItem = {
+  id: string;
+  imageUrl: string;
+  caption?: string | null;
+  timestampSec?: number | null;
+  createdAt: string;
+};
+
 export default function TeacherReviewPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -14,6 +22,7 @@ export default function TeacherReviewPage() {
   const [speakers, setSpeakers] = useState<any[]>([]);
   const [segments, setSegments] = useState<any[]>([]);
   const [analyses, setAnalyses] = useState<any[]>([]);
+  const [boardImages, setBoardImages] = useState<BoardImageItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   // AI run states
@@ -27,14 +36,19 @@ export default function TeacherReviewPage() {
   ]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  // Edit states
+  // Metadata Edit states
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const [categoryDraft, setCategoryDraft] = useState("");
+  const [seriesNameDraft, setSeriesNameDraft] = useState("");
+  const [partNumberDraft, setPartNumberDraft] = useState<string>("");
 
+  // Diarization Edit
   const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null);
   const [speakerNameDraft, setSpeakerNameDraft] = useState("");
   const [speakerRoleDraft, setSpeakerRoleDraft] = useState("TEACHER");
 
+  // Transcript Edit
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [segmentTextDraft, setSegmentTextDraft] = useState("");
   const [segmentTypeDraft, setSegmentTypeDraft] = useState("TEACHER_EXPLANATION");
@@ -43,6 +57,13 @@ export default function TeacherReviewPage() {
   const [pasteTranscriptText, setPasteTranscriptText] = useState("");
   const [isSavingTranscript, setIsSavingTranscript] = useState(false);
 
+  // Image Upload states
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageCaption, setImageCaption] = useState("");
+  const [imageTimestampSec, setImageTimestampSec] = useState("");
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+
   useEffect(() => {
     if (!id) return;
     loadData();
@@ -50,16 +71,20 @@ export default function TeacherReviewPage() {
 
   async function loadData() {
     try {
-      const [lecRes, transRes, aiRes] = await Promise.all([
+      const [lecRes, transRes, aiRes, imgRes] = await Promise.all([
         fetch(`/api/lectures/${id}`),
         fetch(`/api/lectures/${id}/transcript`),
         fetch(`/api/ai?lectureId=${id}`),
+        fetch(`/api/images?lectureId=${id}`),
       ]);
 
       if (lecRes.ok) {
         const d = await lecRes.json();
         setLecture(d.lecture);
         setTitleDraft(d.lecture?.title || "");
+        setCategoryDraft(d.lecture?.category || "Clinical Psychology");
+        setSeriesNameDraft(d.lecture?.seriesName || "");
+        setPartNumberDraft(d.lecture?.partNumber ? String(d.lecture.partNumber) : "");
         setSpeakers(d.lecture?.speakers || []);
       }
       if (transRes.ok) {
@@ -70,6 +95,10 @@ export default function TeacherReviewPage() {
         const d = await aiRes.json();
         setAnalyses(d.analyses || []);
       }
+      if (imgRes.ok) {
+        const d = await imgRes.json();
+        setBoardImages(d.images || []);
+      }
     } catch (err) {
       console.error("Load review data error:", err);
     } finally {
@@ -77,13 +106,16 @@ export default function TeacherReviewPage() {
     }
   }
 
-  async function updateTitle() {
-    if (!titleDraft.trim()) return;
-
+  async function saveMetadata() {
     const res = await fetch(`/api/lectures/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: titleDraft.trim() }),
+      body: JSON.stringify({
+        title: titleDraft.trim() || lecture.title,
+        category: categoryDraft.trim() || undefined,
+        seriesName: seriesNameDraft.trim() || null,
+        partNumber: partNumberDraft ? parseInt(partNumberDraft, 10) : null,
+      }),
     });
 
     if (res.ok) {
@@ -160,6 +192,73 @@ export default function TeacherReviewPage() {
     }
   }
 
+  // Handle board image selection and upload
+  function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImageFile(file);
+    const reader = new FileReader();
+    reader.onload = () => {
+      setImagePreview(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function uploadBoardImage(e: React.FormEvent) {
+    e.preventDefault();
+    if (!imagePreview) {
+      alert("Please select an image first.");
+      return;
+    }
+
+    setIsUploadingImage(true);
+    try {
+      let ts: number | undefined = undefined;
+      if (imageTimestampSec.trim()) {
+        if (imageTimestampSec.includes(":")) {
+          const parts = imageTimestampSec.split(":");
+          ts = parseInt(parts[0] || "0", 10) * 60 + parseInt(parts[1] || "0", 10);
+        } else {
+          ts = parseFloat(imageTimestampSec);
+        }
+      }
+
+      const res = await fetch("/api/images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lectureId: id,
+          imageUrl: imagePreview,
+          caption: imageCaption.trim() || "Whiteboard diagram",
+          timestampSec: ts,
+        }),
+      });
+
+      if (res.ok) {
+        setImageFile(null);
+        setImagePreview(null);
+        setImageCaption("");
+        setImageTimestampSec("");
+        loadData();
+      } else {
+        alert("Failed to upload image.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Upload error");
+    } finally {
+      setIsUploadingImage(false);
+    }
+  }
+
+  async function deleteBoardImage(imageId: string) {
+    if (!confirm("Delete this whiteboard photo?")) return;
+    const res = await fetch(`/api/images/${imageId}`, { method: "DELETE" });
+    if (res.ok) {
+      loadData();
+    }
+  }
+
   async function runAiPipeline() {
     if (selectedAiTypes.length === 0) {
       alert("Select at least one AI analysis type.");
@@ -221,7 +320,7 @@ export default function TeacherReviewPage() {
     const nextStatus = lecture.status === "PUBLISHED" ? "IN_REVIEW" : "PUBLISHED";
     const confirmMsg =
       nextStatus === "PUBLISHED"
-        ? "Publish this lecture to all students? Students will be able to stream audio and read approved materials."
+        ? "Publish this lecture to all students? Students will be able to stream audio, view board photos, and read approved materials."
         : "Unpublish this lecture? Students will no longer see it.";
 
     if (!confirm(confirmMsg)) return;
@@ -272,34 +371,77 @@ export default function TeacherReviewPage() {
             </span>
           </div>
 
-          {/* Editable Title */}
+          {/* Editable Title & Metadata */}
           {isEditingTitle ? (
-            <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "0.5rem 0" }}>
-              <input
-                value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                style={{ fontSize: "1.25rem", padding: "0.4rem 0.75rem", width: 450, fontWeight: 700 }}
-                placeholder="Lecture Title..."
-              />
-              <button className="primary sm" onClick={updateTitle}>
-                Save Title
-              </button>
-              <button className="sm" onClick={() => setIsEditingTitle(false)}>
-                Cancel
-              </button>
+            <div className="card" style={{ display: "grid", gap: "0.75rem", margin: "0.75rem 0", padding: "1rem" }}>
+              <label>
+                <strong>Lecture Title:</strong>
+                <input
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  style={{ width: "100%", fontSize: "1.1rem", padding: "0.4rem 0.6rem", marginTop: 4 }}
+                />
+              </label>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }} className="grid-3col">
+                <label>
+                  <strong>Category / Domain:</strong>
+                  <input
+                    value={categoryDraft}
+                    onChange={(e) => setCategoryDraft(e.target.value)}
+                    placeholder="e.g. Music, Psychology, CSS, History, Home Problems"
+                    style={{ width: "100%", marginTop: 4 }}
+                  />
+                </label>
+                <label>
+                  <strong>Series / Course Name:</strong>
+                  <input
+                    value={seriesNameDraft}
+                    onChange={(e) => setSeriesNameDraft(e.target.value)}
+                    placeholder="e.g. Narcissism & Domestic Patterns"
+                    style={{ width: "100%", marginTop: 4 }}
+                  />
+                </label>
+                <label>
+                  <strong>Part Number:</strong>
+                  <input
+                    type="number"
+                    value={partNumberDraft}
+                    onChange={(e) => setPartNumberDraft(e.target.value)}
+                    placeholder="1"
+                    style={{ width: "100%", marginTop: 4 }}
+                  />
+                </label>
+              </div>
+
+              <div style={{ display: "flex", gap: 8 }}>
+                <button className="primary sm" onClick={saveMetadata}>
+                  Save Lecture Details
+                </button>
+                <button className="sm" onClick={() => setIsEditingTitle(false)}>
+                  Cancel
+                </button>
+              </div>
             </div>
           ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <h1 style={{ margin: "0 0 4px" }}>{lecture.title}</h1>
-              <button className="sm" onClick={() => setIsEditingTitle(true)} title="Rename lecture">
-                ✏️ Rename
-              </button>
+            <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <h1 style={{ margin: "0 0 4px" }}>{lecture.title}</h1>
+                <button className="sm" onClick={() => setIsEditingTitle(true)} title="Edit title and series">
+                  ✏️ Edit Details
+                </button>
+              </div>
+
+              <p style={{ color: "var(--color-text-muted)", margin: 0, fontSize: "0.9rem" }}>
+                Recorded on {new Date(lecture.lectureDate).toLocaleDateString()} · <strong>{lecture.category || "General"}</strong> · {lecture.primaryLanguage}
+                {lecture.seriesName && (
+                  <span style={{ marginLeft: 8, color: "#000", fontWeight: 600 }}>
+                    | 🔗 Series: {lecture.seriesName} {lecture.partNumber ? `(Part ${lecture.partNumber})` : ""}
+                  </span>
+                )}
+              </p>
             </div>
           )}
-
-          <p style={{ color: "var(--color-text-muted)", margin: 0, fontSize: "0.9rem" }}>
-            Recorded on {new Date(lecture.lectureDate).toLocaleDateString()} · {lecture.category} · {lecture.primaryLanguage}
-          </p>
         </div>
 
         <div style={{ display: "flex", gap: 8 }}>
@@ -313,75 +455,101 @@ export default function TeacherReviewPage() {
       </div>
 
       <div style={{ display: "grid", gap: "2rem" }}>
-        {/* Speaker Diarization Manager */}
+        {/* 🖼️ Whiteboard & Board Photos Section */}
         <section className="card">
-          <h2 style={{ fontSize: "1.2rem", marginBottom: "0.5rem" }}>👥 Speaker Identification & Roles</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+            <h2 style={{ fontSize: "1.2rem", margin: 0 }}>🖼️ Whiteboard, Board Photos & Diagram Attachments</h2>
+            <span className="badge tag-source">{boardImages.length} Photo(s)</span>
+          </div>
+
           <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: "0 0 1rem" }}>
-            Designate Instructor vs Student roles.
+            Upload snapshots of the whiteboard, diagrams, or slides. Students can view them side-by-side with the audio transcript.
           </p>
 
-          <div style={{ display: "grid", gap: "0.75rem" }}>
-            {speakers.map((spk) => (
-              <div
-                key={spk.id}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "0.6rem 0.9rem",
-                  background: "var(--color-surface-hover)",
-                  borderRadius: "var(--radius)",
-                }}
-              >
-                {editingSpeakerId === spk.id ? (
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
-                    <input
-                      value={speakerNameDraft}
-                      onChange={(e) => setSpeakerNameDraft(e.target.value)}
-                      style={{ padding: "0.3rem 0.6rem", fontSize: "0.9rem" }}
-                    />
-                    <select
-                      value={speakerRoleDraft}
-                      onChange={(e) => setSpeakerRoleDraft(e.target.value)}
-                      style={{ padding: "0.3rem 0.6rem", fontSize: "0.9rem" }}
-                    >
-                      <option value="TEACHER">TEACHER</option>
-                      <option value="STUDENT">STUDENT</option>
-                      <option value="UNKNOWN">UNKNOWN</option>
-                    </select>
-                    <button className="primary sm" onClick={() => updateSpeaker(spk.id)}>
-                      Save
-                    </button>
-                    <button className="sm" onClick={() => setEditingSpeakerId(null)}>
-                      Cancel
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <strong>{spk.displayName}</strong>
-                      <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
-                        ({spk.rawLabel})
-                      </span>
-                      <span className={`badge ${spk.role === "TEACHER" ? "tag-source" : "tag-interpretation"}`}>
-                        {spk.role}
-                      </span>
-                    </div>
-                    <button
-                      className="sm"
-                      onClick={() => {
-                        setEditingSpeakerId(spk.id);
-                        setSpeakerNameDraft(spk.displayName);
-                        setSpeakerRoleDraft(spk.role);
-                      }}
-                    >
-                      ✏️ Rename
-                    </button>
-                  </>
-                )}
+          {/* Upload Form */}
+          <form onSubmit={uploadBoardImage} style={{ background: "var(--color-surface-hover)", padding: "1rem", borderRadius: "var(--radius)", marginBottom: "1.25rem", border: "1px solid var(--color-border)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr 120px auto", gap: "0.75rem", alignItems: "flex-end" }} className="grid-responsive">
+              <label>
+                <strong style={{ fontSize: "0.85rem" }}>Select Photo / Diagram:</strong>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageFileChange}
+                  style={{ width: "100%", marginTop: 4, fontSize: "0.85rem" }}
+                  required
+                />
+              </label>
+
+              <label>
+                <strong style={{ fontSize: "0.85rem" }}>Caption / Description:</strong>
+                <input
+                  value={imageCaption}
+                  onChange={(e) => setImageCaption(e.target.value)}
+                  placeholder="e.g. Board drawing: Trait hierarchy"
+                  style={{ width: "100%", marginTop: 4 }}
+                />
+              </label>
+
+              <label>
+                <strong style={{ fontSize: "0.85rem" }}>Timestamp:</strong>
+                <input
+                  value={imageTimestampSec}
+                  onChange={(e) => setImageTimestampSec(e.target.value)}
+                  placeholder="04:30"
+                  style={{ width: "100%", marginTop: 4 }}
+                />
+              </label>
+
+              <button type="submit" className="primary sm" disabled={isUploadingImage || !imagePreview} style={{ height: 38 }}>
+                {isUploadingImage ? "Uploading..." : "➕ Add to Lecture"}
+              </button>
+            </div>
+
+            {imagePreview && (
+              <div style={{ marginTop: "0.75rem", display: "flex", alignItems: "center", gap: "1rem" }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={imagePreview}
+                  alt="Preview"
+                  style={{ height: 80, width: "auto", borderRadius: "var(--radius)", objectFit: "cover", border: "1px solid var(--color-border)" }}
+                />
+                <span style={{ fontSize: "0.82rem", color: "var(--color-text-muted)" }}>Preview ready to attach.</span>
               </div>
-            ))}
-          </div>
+            )}
+          </form>
+
+          {/* Board Images Grid */}
+          {boardImages.length > 0 ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "1rem" }}>
+              {boardImages.map((img) => (
+                <div key={img.id} style={{ border: "1px solid var(--color-border)", borderRadius: "var(--radius)", overflow: "hidden", background: "var(--color-surface)" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.imageUrl}
+                    alt={img.caption || "Board photo"}
+                    style={{ width: "100%", height: 140, objectFit: "cover", display: "block" }}
+                  />
+                  <div style={{ padding: "0.6rem" }}>
+                    <div style={{ fontWeight: 600, fontSize: "0.85rem", marginBottom: 2 }}>{img.caption || "Whiteboard diagram"}</div>
+                    {img.timestampSec !== null && img.timestampSec !== undefined && (
+                      <span className="badge tag-source" style={{ fontSize: "0.75rem" }}>
+                        ⏱️ {formatTime(img.timestampSec)}
+                      </span>
+                    )}
+                    <div style={{ marginTop: "0.5rem", display: "flex", justifyContent: "flex-end" }}>
+                      <button className="sm danger" onClick={() => deleteBoardImage(img.id)} style={{ fontSize: "0.75rem", padding: "0.2rem 0.4rem" }}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: "var(--color-text-muted)", fontSize: "0.85rem", margin: 0 }}>
+              No whiteboard photos attached yet. Use the upload box above to add board drawings.
+            </p>
+          )}
         </section>
 
         {/* Verbatim Transcript Segments Editor */}
@@ -410,7 +578,7 @@ export default function TeacherReviewPage() {
             >
               <strong style={{ fontSize: "0.95rem" }}>Paste or Type Lecture Text:</strong>
               <p style={{ fontSize: "0.82rem", color: "var(--color-text-muted)", margin: "4px 0 8px" }}>
-                Paste your verbatim notes or speech (e.g. your lecture on Narcissism, Attention, and Competition):
+                Paste your verbatim notes or speech (e.g. your lecture on Narcissism, Music, CSS, or Family dynamics):
               </p>
               <textarea
                 value={pasteTranscriptText}
@@ -520,11 +688,78 @@ export default function TeacherReviewPage() {
           </div>
         </section>
 
+        {/* Speaker Diarization Manager */}
+        <section className="card">
+          <h2 style={{ fontSize: "1.2rem", marginBottom: "0.5rem" }}>👥 Speaker Identification & Roles</h2>
+          <div style={{ display: "grid", gap: "0.75rem" }}>
+            {speakers.map((spk) => (
+              <div
+                key={spk.id}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "0.6rem 0.9rem",
+                  background: "var(--color-surface-hover)",
+                  borderRadius: "var(--radius)",
+                }}
+              >
+                {editingSpeakerId === spk.id ? (
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", width: "100%" }}>
+                    <input
+                      value={speakerNameDraft}
+                      onChange={(e) => setSpeakerNameDraft(e.target.value)}
+                      style={{ padding: "0.3rem 0.6rem", fontSize: "0.9rem" }}
+                    />
+                    <select
+                      value={speakerRoleDraft}
+                      onChange={(e) => setSpeakerRoleDraft(e.target.value)}
+                      style={{ padding: "0.3rem 0.6rem", fontSize: "0.9rem" }}
+                    >
+                      <option value="TEACHER">TEACHER</option>
+                      <option value="STUDENT">STUDENT</option>
+                      <option value="UNKNOWN">UNKNOWN</option>
+                    </select>
+                    <button className="primary sm" onClick={() => updateSpeaker(spk.id)}>
+                      Save
+                    </button>
+                    <button className="sm" onClick={() => setEditingSpeakerId(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <strong>{spk.displayName}</strong>
+                      <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                        ({spk.rawLabel})
+                      </span>
+                      <span className={`badge ${spk.role === "TEACHER" ? "tag-source" : "tag-interpretation"}`}>
+                        {spk.role}
+                      </span>
+                    </div>
+                    <button
+                      className="sm"
+                      onClick={() => {
+                        setEditingSpeakerId(spk.id);
+                        setSpeakerNameDraft(spk.displayName);
+                        setSpeakerRoleDraft(spk.role);
+                      }}
+                    >
+                      ✏️ Rename
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* AI Extraction & Teacher Supervision */}
         <section className="card">
           <h2 style={{ fontSize: "1.2rem", marginBottom: "0.5rem" }}>🤖 AI Extraction & Study Suite</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: "0 0 1rem" }}>
-            Generate structured clinical analyses based on the lecture transcript. Approve them before students see them.
+            Generate structured analyses based on the lecture transcript. Approve them before students see them.
           </p>
 
           {/* Trigger Box */}
@@ -686,11 +921,6 @@ export default function TeacherReviewPage() {
                 </div>
               );
             })}
-            {analyses.length === 0 && (
-              <p style={{ color: "var(--color-text-muted)", fontSize: "0.85rem" }}>
-                No AI analyses generated yet. Select analysis types above and click &quot;Run AI Extraction Pipeline&quot;.
-              </p>
-            )}
           </div>
         </section>
       </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -19,11 +19,20 @@ type TranscriptSegment = {
   speaker?: { displayName: string } | null;
 };
 
+type BoardImageItem = {
+  id: string;
+  imageUrl: string;
+  caption?: string | null;
+  timestampSec?: number | null;
+};
+
 type Lecture = {
   id: string;
   title: string;
   description?: string;
   category?: string;
+  seriesName?: string;
+  partNumber?: number;
   lectureDate: string;
   status: string;
   primaryLanguage: string;
@@ -59,6 +68,7 @@ function LectureContent() {
 
   const [lecture, setLecture] = useState<Lecture | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
+  const [boardImages, setBoardImages] = useState<BoardImageItem[]>([]);
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const [notes, setNotes] = useState<any[]>([]);
   const [aiAnalyses, setAiAnalyses] = useState<any[]>([]);
@@ -66,7 +76,7 @@ function LectureContent() {
   const [error, setError] = useState<string | null>(null);
 
   // Tabs
-  const [activeTab, setActiveTab] = useState<"transcript" | "ai" | "notes" | "questions">("transcript");
+  const [activeTab, setActiveTab] = useState<"transcript" | "board" | "ai" | "notes">("transcript");
   const [playbackRate, setPlaybackRate] = useState<number>(1.0);
 
   // Note dialog
@@ -87,11 +97,12 @@ function LectureContent() {
     if (!id) return;
     (async () => {
       try {
-        const [lectureRes, transcriptRes, notesRes, aiRes] = await Promise.all([
+        const [lectureRes, transcriptRes, notesRes, aiRes, imgRes] = await Promise.all([
           fetch(`/api/lectures/${id}`),
           fetch(`/api/lectures/${id}/transcript`),
           fetch(`/api/notes?lectureId=${id}`),
           fetch(`/api/ai?lectureId=${id}`),
+          fetch(`/api/images?lectureId=${id}`),
         ]);
 
         if (!lectureRes.ok) throw new Error("Failed to load lecture");
@@ -99,11 +110,13 @@ function LectureContent() {
         const transcriptData = await transcriptRes.json();
         const notesData = await notesRes.json();
         const aiData = await aiRes.json();
+        const imgData = await imgRes.json().catch(() => ({ images: [] }));
 
         setLecture(lectureData.lecture);
         setSegments(transcriptData.segments ?? []);
         setNotes(notesData.notes ?? []);
         setAiAnalyses(aiData.analyses ?? []);
+        setBoardImages(imgData.images ?? []);
 
         // Check if query timestamp exists e.g. ?t=140
         const tParam = searchParams.get("t");
@@ -121,26 +134,28 @@ function LectureContent() {
     })();
   }, [id, searchParams]);
 
-  function jumpTo(sec: number) {
-    if (audioRef.current) {
-      audioRef.current.currentTime = sec;
-      audioRef.current.play().catch(() => {});
-    }
-  }
-
+  // Sync active segment with audio time
   function handleTimeUpdate() {
-    const t = audioRef.current?.currentTime ?? 0;
-    const current = segments.find((s) => t >= s.startTimeSec && t < s.endTimeSec);
+    if (!audioRef.current) return;
+    const time = audioRef.current.currentTime;
+    const current = segments.find(
+      (s) => time >= s.startTimeSec && time < s.endTimeSec
+    );
     if (current && current.id !== activeSegmentId) {
       setActiveSegmentId(current.id);
     }
   }
 
+  function jumpTo(seconds: number) {
+    if (audioRef.current) {
+      audioRef.current.currentTime = seconds;
+      audioRef.current.play().catch(() => {});
+    }
+  }
+
   function changeSpeed(rate: number) {
     setPlaybackRate(rate);
-    if (audioRef.current) {
-      audioRef.current.playbackRate = rate;
-    }
+    if (audioRef.current) audioRef.current.playbackRate = rate;
   }
 
   async function handleSaveNote(e: React.FormEvent) {
@@ -163,14 +178,13 @@ function LectureContent() {
       setNotes((prev) => [note, ...prev]);
       setNoteText("");
       setNoteModalOpen(false);
+      setTargetSegment(null);
     }
   }
 
   async function handleConfusion(segment: TranscriptSegment) {
     setConfusionLoading(true);
     setConfusionModalOpen(true);
-    setActiveConfusionData(null);
-
     try {
       const res = await fetch("/api/confusions", {
         method: "POST",
@@ -210,8 +224,7 @@ function LectureContent() {
 
     if (res.ok) {
       const { question } = await res.json();
-      // Prompt if they'd like to submit to teacher immediately
-      if (confirm("Question saved to your private notebook! Submit directly to instructor for official answer?")) {
+      if (confirm("Question saved! Submit to instructor for official answer?")) {
         await fetch(`/api/questions/${question.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -246,16 +259,28 @@ function LectureContent() {
       {/* Header */}
       <div style={{ marginBottom: "1.25rem" }}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-          <Link href="/lectures" style={{ fontSize: "0.85rem" }}>
+          <Link href="/lectures" style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
             ← All Lectures
           </Link>
           <span style={{ color: "var(--color-border)" }}>/</span>
-          <span className="badge tag-source">{lecture.primaryLanguage}</span>
+          <span className="badge tag-source">{lecture.category || "General"}</span>
+          <span className="badge tag-interpretation">{lecture.primaryLanguage}</span>
         </div>
+
         <h1 style={{ margin: "0 0 6px", fontSize: "1.85rem" }}>{lecture.title}</h1>
         <p style={{ color: "var(--color-text-muted)", margin: 0, fontSize: "0.92rem" }}>
-          {new Date(lecture.lectureDate).toLocaleDateString()} · {lecture.category || "Clinical Lecture"}
+          Recorded on {new Date(lecture.lectureDate).toLocaleDateString()}
         </p>
+
+        {/* Series Banner */}
+        {lecture.seriesName && (
+          <div style={{ marginTop: "0.5rem", padding: "0.5rem 0.85rem", background: "var(--color-surface-hover)", borderRadius: "var(--radius)", display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <span>🔗 <strong>Series:</strong> {lecture.seriesName} {lecture.partNumber ? `(Part ${lecture.partNumber})` : ""}</span>
+            <Link href={`/search?q=${encodeURIComponent(lecture.seriesName)}`} style={{ fontSize: "0.8rem", textDecoration: "underline" }}>
+              View all parts in series →
+            </Link>
+          </div>
+        )}
 
         {/* Topic Badges */}
         {lecture.lectureTopics?.length > 0 && (
@@ -280,6 +305,13 @@ function LectureContent() {
           gap: "0.75rem",
         }}
       >
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <strong style={{ fontSize: "0.95rem" }}>Lecture Audio Stream</strong>
+          <span style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+            {lecture.actualDuration ? `Duration: ${formatTime(lecture.actualDuration)}` : "Live Master Audio"}
+          </span>
+        </div>
+
         {audioSrc ? (
           <div style={{ display: "flex", alignItems: "center", gap: "1rem", flexWrap: "wrap" }}>
             <audio
@@ -287,19 +319,20 @@ function LectureContent() {
               src={audioSrc}
               controls
               onTimeUpdate={handleTimeUpdate}
-              style={{ flex: 1, minWidth: 260 }}
+              style={{ flex: "1 1 300px", height: 40 }}
             />
-            {/* Speed Selector */}
-            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-              <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>Speed:</span>
+
+            {/* Playback speed controls */}
+            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <span style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>Speed:</span>
               {[0.75, 1.0, 1.25, 1.5, 2.0].map((rate) => (
                 <button
                   key={rate}
                   className="sm"
                   onClick={() => changeSpeed(rate)}
                   style={{
-                    background: playbackRate === rate ? "var(--color-accent)" : "transparent",
-                    color: playbackRate === rate ? "#ffffff" : "var(--color-text)",
+                    background: playbackRate === rate ? "#000" : "transparent",
+                    color: playbackRate === rate ? "#fff" : "var(--color-text)",
                   }}
                 >
                   {rate}x
@@ -309,7 +342,7 @@ function LectureContent() {
           </div>
         ) : (
           <div style={{ color: "var(--color-text-muted)", fontSize: "0.9rem" }}>
-            🎙️ Audio is currently being processed or synthesized.
+            🎙️ Audio is streaming from master recording storage.
           </div>
         )}
       </div>
@@ -320,11 +353,11 @@ function LectureContent() {
           onClick={() => setActiveTab("transcript")}
           style={{
             border: "none",
-            borderBottom: activeTab === "transcript" ? "2px solid var(--color-accent)" : "none",
+            borderBottom: activeTab === "transcript" ? "2px solid #000" : "none",
             borderRadius: 0,
             background: "transparent",
-            fontWeight: activeTab === "transcript" ? 600 : 400,
-            color: activeTab === "transcript" ? "var(--color-accent)" : "var(--color-text-muted)",
+            fontWeight: activeTab === "transcript" ? 700 : 400,
+            color: activeTab === "transcript" ? "#000" : "var(--color-text-muted)",
             padding: "0.6rem 1rem",
           }}
         >
@@ -332,51 +365,67 @@ function LectureContent() {
         </button>
 
         <button
-          onClick={() => setActiveTab("ai")}
+          onClick={() => setActiveTab("board")}
           style={{
             border: "none",
-            borderBottom: activeTab === "ai" ? "2px solid var(--color-interpretation)" : "none",
+            borderBottom: activeTab === "board" ? "2px solid #000" : "none",
             borderRadius: 0,
             background: "transparent",
-            fontWeight: activeTab === "ai" ? 600 : 400,
-            color: activeTab === "ai" ? "var(--color-interpretation)" : "var(--color-text-muted)",
+            fontWeight: activeTab === "board" ? 700 : 400,
+            color: activeTab === "board" ? "#000" : "var(--color-text-muted)",
             padding: "0.6rem 1rem",
           }}
         >
-          🤖 AI Analyses & Study Suite ({aiAnalyses.length})
+          🖼️ Whiteboard &amp; Diagrams ({boardImages.length})
+        </button>
+
+        <button
+          onClick={() => setActiveTab("ai")}
+          style={{
+            border: "none",
+            borderBottom: activeTab === "ai" ? "2px solid #000" : "none",
+            borderRadius: 0,
+            background: "transparent",
+            fontWeight: activeTab === "ai" ? 700 : 400,
+            color: activeTab === "ai" ? "#000" : "var(--color-text-muted)",
+            padding: "0.6rem 1rem",
+          }}
+        >
+          🤖 AI Study Suite ({aiAnalyses.length})
         </button>
 
         <button
           onClick={() => setActiveTab("notes")}
           style={{
             border: "none",
-            borderBottom: activeTab === "notes" ? "2px solid var(--color-note)" : "none",
+            borderBottom: activeTab === "notes" ? "2px solid #000" : "none",
             borderRadius: 0,
             background: "transparent",
-            fontWeight: activeTab === "notes" ? 600 : 400,
-            color: activeTab === "notes" ? "var(--color-note)" : "var(--color-text-muted)",
+            fontWeight: activeTab === "notes" ? 700 : 400,
+            color: activeTab === "notes" ? "#000" : "var(--color-text-muted)",
             padding: "0.6rem 1rem",
           }}
         >
-          📝 My Private Notes ({notes.length})
+          📝 Private Notes ({notes.length})
         </button>
       </div>
 
-      {/* Tab Contents */}
+      {/* Tab Contents: TRANSCRIPT */}
       {activeTab === "transcript" && (
         <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "1.5rem" }} className="grid-2col">
-          {/* Transcript Feed */}
           <section style={{ display: "grid", gap: "0.75rem" }}>
             {segments.map((seg) => {
               const isActive = activeSegmentId === seg.id;
+              const hasShaheed = seg.text.toLowerCase().includes("shaheed");
+
               return (
                 <div
                   key={seg.id}
                   ref={isActive ? activeSegmentRef : null}
                   className="card"
                   style={{
-                    borderColor: isActive ? "var(--color-accent)" : "var(--color-border)",
-                    boxShadow: isActive ? "0 0 0 2px var(--color-accent-light)" : "none",
+                    borderColor: isActive ? "#000" : "var(--color-border)",
+                    boxShadow: isActive ? "0 0 0 2px #000" : "none",
                     transition: "all 0.15s ease",
                   }}
                 >
@@ -399,18 +448,13 @@ function LectureContent() {
 
                   <p style={{ margin: "0.4rem 0", fontSize: "0.95rem", lineHeight: 1.6 }}>{seg.text}</p>
 
-                  {seg.translatedText && (
-                    <div
-                      style={{
-                        fontSize: "0.85rem",
-                        color: "var(--color-text-muted)",
-                        background: "var(--color-surface-hover)",
-                        padding: "0.4rem 0.6rem",
-                        borderRadius: "var(--radius)",
-                        marginTop: "0.4rem",
-                      }}
-                    >
-                      <em>Translation:</em> {seg.translatedText}
+                  {/* Code-Word Indicator */}
+                  {hasShaheed && (
+                    <div style={{ background: "#fef3c7", border: "1px solid #fde68a", padding: "0.4rem 0.6rem", borderRadius: "var(--radius)", fontSize: "0.82rem", marginTop: "0.4rem", display: "flex", gap: 6, alignItems: "center" }}>
+                      <span>💡 <strong>Teacher Code-Word: &quot;Shaheed&quot;</strong> = Covert Narcissist / Martyr Complex</span>
+                      <Link href="/lexicon" style={{ marginLeft: "auto", textDecoration: "underline" }}>
+                        View Lexicon →
+                      </Link>
                     </div>
                   )}
 
@@ -419,7 +463,6 @@ function LectureContent() {
                     <button
                       className="sm"
                       onClick={() => handleConfusion(seg)}
-                      style={{ background: "var(--color-accent-light)", color: "var(--color-accent)" }}
                     >
                       🤔 I didn&apos;t understand
                     </button>
@@ -445,296 +488,239 @@ function LectureContent() {
                 </div>
               );
             })}
-            {segments.length === 0 && <p className="card">Transcript processing or pending.</p>}
+            {segments.length === 0 && <p className="card">No transcript segments available.</p>}
           </section>
 
-          {/* Quick Sidebar */}
+          {/* Right Sidebar: Quick Controls */}
           <aside style={{ display: "grid", gap: "1rem", alignSelf: "start" }}>
             <div className="card">
-              <h3 style={{ fontSize: "1.05rem", marginBottom: "0.5rem" }}>💡 Study Controls</h3>
-              <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: "0 0 1rem" }}>
-                Click any timestamp in the transcript to jump audio directly to that explanation.
+              <h3 style={{ margin: "0 0 0.5rem", fontSize: "1rem" }}>💡 Study Controls</h3>
+              <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+                Click any timestamp in the transcript or board photo to jump audio directly to that moment.
               </p>
               <button
                 className="primary sm"
-                style={{ width: "100%" }}
                 onClick={() => {
                   setTargetSegment(null);
                   setNoteModalOpen(true);
                 }}
+                style={{ width: "100%" }}
               >
                 + Add General Note
               </button>
             </div>
 
-            <div className="card">
-              <h3 style={{ fontSize: "1.05rem", marginBottom: "0.5rem" }}>My Notes on this Lecture</h3>
-              <div style={{ display: "grid", gap: "0.5rem" }}>
-                {notes.map((n) => (
-                  <div
-                    key={n.id}
-                    style={{
-                      background: "var(--color-surface-hover)",
-                      padding: "0.5rem 0.75rem",
-                      borderRadius: "var(--radius)",
-                      fontSize: "0.85rem",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span className="badge tag-note">NOTE</span>
-                      {n.timestampSec != null && (
-                        <button
-                          className="sm"
-                          onClick={() => jumpTo(n.timestampSec)}
-                          style={{ padding: "0 4px", fontSize: "0.75rem" }}
-                        >
-                          ▶ {formatTime(n.timestampSec)}
-                        </button>
-                      )}
+            {/* Quick Board Photos Preview */}
+            {boardImages.length > 0 && (
+              <div className="card">
+                <h3 style={{ margin: "0 0 0.5rem", fontSize: "1rem" }}>🖼️ Whiteboard Snapshots</h3>
+                <div style={{ display: "grid", gap: "0.5rem" }}>
+                  {boardImages.slice(0, 3).map((img) => (
+                    <div
+                      key={img.id}
+                      onClick={() => img.timestampSec !== null && img.timestampSec !== undefined && jumpTo(img.timestampSec)}
+                      style={{ cursor: "pointer", display: "flex", gap: 8, alignItems: "center", border: "1px solid var(--color-border)", padding: 4, borderRadius: "var(--radius)" }}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={img.imageUrl} alt="Board" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 4 }} />
+                      <div style={{ fontSize: "0.8rem", overflow: "hidden" }}>
+                        <div style={{ fontWeight: 600, textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.caption || "Board drawing"}</div>
+                        {img.timestampSec !== null && img.timestampSec !== undefined && (
+                          <span style={{ color: "var(--color-text-muted)", fontFamily: "monospace" }}>▶ {formatTime(img.timestampSec)}</span>
+                        )}
+                      </div>
                     </div>
-                    <p style={{ margin: "0.3rem 0 0" }}>{n.text}</p>
-                  </div>
-                ))}
-                {notes.length === 0 && (
-                  <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
-                    No personal notes saved yet.
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
           </aside>
         </div>
       )}
 
-      {/* AI Analyses Tab */}
-      {activeTab === "ai" && (
-        <div style={{ display: "grid", gap: "1.25rem" }}>
-          {aiAnalyses.map((ana) => (
-            <div key={ana.id} className="card">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
-                <span className="badge tag-interpretation">AI INTERPRETATION · {ana.type}</span>
-                <span style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
-                  Curated & Approved by Instructor
-                </span>
-              </div>
-
-              <div style={{ fontSize: "0.92rem", lineHeight: 1.6 }}>
-                {ana.type === "SUMMARY_DETAILED" || ana.type === "SUMMARY_SHORT" ? (
-                  <p>{ana.content?.summary || JSON.stringify(ana.content)}</p>
-                ) : ana.type === "KEY_CONCEPTS" && Array.isArray(ana.content?.concepts) ? (
-                  <div style={{ display: "grid", gap: "0.75rem" }}>
-                    {ana.content.concepts.map((c: any, i: number) => (
-                      <div key={i} style={{ background: "var(--color-surface-hover)", padding: "0.6rem", borderRadius: "var(--radius)" }}>
-                        <strong>{c.term}:</strong> {c.definition}
-                      </div>
-                    ))}
+      {/* Tab Contents: WHITEBOARD & DIAGRAMS */}
+      {activeTab === "board" && (
+        <div style={{ display: "grid", gap: "1.5rem" }}>
+          {boardImages.length > 0 ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: "1.5rem" }}>
+              {boardImages.map((img) => (
+                <div key={img.id} className="card" style={{ padding: "0.75rem", display: "flex", flexDirection: "column" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.imageUrl}
+                    alt={img.caption || "Whiteboard diagram"}
+                    style={{ width: "100%", height: 220, objectFit: "contain", background: "#f8f9fa", borderRadius: "var(--radius)" }}
+                  />
+                  <div style={{ marginTop: "0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <strong>{img.caption || "Whiteboard drawing"}</strong>
+                    {img.timestampSec !== null && img.timestampSec !== undefined && (
+                      <button className="sm" onClick={() => jumpTo(img.timestampSec!)} style={{ fontFamily: "monospace" }}>
+                        ▶ Jump to {formatTime(img.timestampSec)}
+                      </button>
+                    )}
                   </div>
-                ) : ana.type === "REVISION_NOTES" && Array.isArray(ana.content?.points) ? (
-                  <ul style={{ margin: 0, paddingLeft: "1.2rem" }}>
-                    {ana.content.points.map((p: string, i: number) => (
-                      <li key={i}>{p}</li>
-                    ))}
-                  </ul>
-                ) : ana.type === "FLASHCARDS" && Array.isArray(ana.content?.cards) ? (
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "1rem" }}>
-                    {ana.content.cards.map((card: any, i: number) => (
-                      <div key={i} style={{ border: "1px solid var(--color-border)", padding: "1rem", borderRadius: "var(--radius)" }}>
-                        <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginBottom: 4 }}>Question</div>
-                        <div style={{ fontWeight: 600, marginBottom: "0.5rem" }}>{card.front}</div>
-                        <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)", marginBottom: 4 }}>Answer</div>
-                        <div>{card.back}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <pre style={{ whiteSpace: "pre-wrap", fontFamily: "inherit" }}>
-                    {JSON.stringify(ana.content, null, 2)}
-                  </pre>
-                )}
-              </div>
+                </div>
+              ))}
             </div>
-          ))}
-          {aiAnalyses.length === 0 && (
-            <div className="card" style={{ textAlign: "center", padding: "2.5rem 1rem" }}>
-              <h3>No AI Analyses Approved Yet</h3>
-              <p style={{ color: "var(--color-text-muted)" }}>
-                The instructor has not released approved AI summaries for this lecture yet.
-              </p>
+          ) : (
+            <div className="card" style={{ textAlign: "center", padding: "3rem", color: "var(--color-text-muted)" }}>
+              No whiteboard photos or diagrams uploaded for this lecture yet.
             </div>
           )}
         </div>
       )}
 
-      {/* Notes Tab */}
-      {activeTab === "notes" && (
-        <div style={{ display: "grid", gap: "1rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <h2>My Private Notes</h2>
-            <button className="primary sm" onClick={() => setNoteModalOpen(true)}>
-              + Add Note
-            </button>
-          </div>
-          <div style={{ display: "grid", gap: "0.75rem" }}>
-            {notes.map((n) => (
-              <div key={n.id} className="card">
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span className="badge tag-note">PRIVATE NOTE</span>
-                  {n.timestampSec != null && (
-                    <button className="sm" onClick={() => jumpTo(n.timestampSec)}>
-                      ▶ Play at {formatTime(n.timestampSec)}
-                    </button>
+      {/* Tab Contents: AI STUDY SUITE */}
+      {activeTab === "ai" && (
+        <div style={{ display: "grid", gap: "1.25rem" }}>
+          {aiAnalyses.map((item) => {
+            const content = item.content || {};
+            return (
+              <div key={item.id} className="card">
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
+                  <span className="badge tag-interpretation" style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                    {item.type.replace("_", " ")}
+                  </span>
+                  <span className="badge tag-source">✓ Approved by Instructor</span>
+                </div>
+
+                <div style={{ fontSize: "0.95rem", lineHeight: "1.6" }}>
+                  {content.summary && <p style={{ margin: "0 0 0.5rem" }}>{content.summary}</p>}
+
+                  {Array.isArray(content.concepts) && (
+                    <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.5rem" }}>
+                      {content.concepts.map((c: any, i: number) => (
+                        <div key={i} style={{ background: "var(--color-surface-hover)", padding: "0.5rem 0.75rem", borderRadius: "var(--radius)" }}>
+                          <strong>{c.term}:</strong> {c.definition}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {Array.isArray(content.points) && (
+                    <ul style={{ margin: "0.5rem 0", paddingLeft: "1.25rem" }}>
+                      {content.points.map((p: any, i: number) => (
+                        <li key={i}>{typeof p === "string" ? p : p.text}</li>
+                      ))}
+                    </ul>
+                  )}
+
+                  {Array.isArray(content.questions) && (
+                    <ol style={{ margin: "0.5rem 0", paddingLeft: "1.25rem" }}>
+                      {content.questions.map((q: any, i: number) => (
+                        <li key={i}>{typeof q === "string" ? q : q.text}</li>
+                      ))}
+                    </ol>
+                  )}
+
+                  {Array.isArray(content.cards) && (
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0.75rem", marginTop: "0.5rem" }}>
+                      {content.cards.map((card: any, i: number) => (
+                        <div key={i} style={{ border: "1px solid var(--color-border)", padding: "0.75rem", borderRadius: "var(--radius)", background: "var(--color-surface-hover)" }}>
+                          <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", textTransform: "uppercase" }}>Question</div>
+                          <strong>{card.front}</strong>
+                          <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", textTransform: "uppercase", marginTop: "0.5rem" }}>Answer</div>
+                          <div>{card.back}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {Array.isArray(content.outline) && (
+                    <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.5rem" }}>
+                      {content.outline.map((o: any, i: number) => (
+                        <div key={i}>
+                          <strong>{o.heading}</strong>
+                          {Array.isArray(o.subpoints) && (
+                            <ul style={{ margin: "0.25rem 0 0.5rem", paddingLeft: "1.25rem", color: "var(--color-text-muted)" }}>
+                              {o.subpoints.map((sp: string, spi: number) => (
+                                <li key={spi}>{sp}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
-                <p style={{ margin: "0.5rem 0", fontSize: "0.95rem" }}>{n.text}</p>
-                <div style={{ fontSize: "0.78rem", color: "var(--color-text-muted)" }}>
-                  Saved on {new Date(n.createdAt).toLocaleString()}
-                </div>
               </div>
-            ))}
-            {notes.length === 0 && (
-              <p className="card" style={{ color: "var(--color-text-muted)" }}>
-                You have not taken any notes for this lecture yet.
-              </p>
-            )}
-          </div>
+            );
+          })}
+          {aiAnalyses.length === 0 && (
+            <div className="card" style={{ textAlign: "center", padding: "2rem", color: "var(--color-text-muted)" }}>
+              No AI study materials approved for this lecture yet.
+            </div>
+          )}
         </div>
       )}
 
-      {/* Add Note Modal */}
+      {/* Tab Contents: PRIVATE NOTES */}
+      {activeTab === "notes" && (
+        <div style={{ display: "grid", gap: "1rem" }}>
+          {notes.map((n) => (
+            <div key={n.id} className="card" style={{ borderLeft: "3px solid #000" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "0.8rem", color: "var(--color-text-muted)", marginBottom: 4 }}>
+                <span>Private Student Note</span>
+                {n.timestampSec !== null && (
+                  <button className="sm" onClick={() => jumpTo(n.timestampSec)} style={{ fontFamily: "monospace" }}>
+                    ▶ {formatTime(n.timestampSec)}
+                  </button>
+                )}
+              </div>
+              <p style={{ margin: 0, fontSize: "0.95rem" }}>{n.text}</p>
+            </div>
+          ))}
+          {notes.length === 0 && (
+            <div className="card" style={{ textAlign: "center", padding: "2rem", color: "var(--color-text-muted)" }}>
+              No personal notes saved yet. Click &quot;+ Note&quot; on any transcript segment to take private notes.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Modals */}
       {noteModalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
-            padding: "1rem",
-          }}
-        >
-          <div className="card" style={{ maxWidth: 480, width: "100%", background: "var(--color-surface)" }}>
-            <h3 style={{ marginTop: 0 }}>Add Private Note</h3>
-            {targetSegment && (
-              <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", background: "var(--color-surface-hover)", padding: "0.5rem", borderRadius: "var(--radius)" }}>
-                Linked to {formatTime(targetSegment.startTimeSec)}: &quot;{targetSegment.text.slice(0, 80)}...&quot;
-              </p>
-            )}
-            <form onSubmit={handleSaveNote} style={{ display: "grid", gap: "0.75rem" }}>
-              <textarea
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                placeholder="Write your private note or observation..."
-                rows={4}
-                required
-                style={{ width: "100%" }}
-              />
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <button type="button" onClick={() => setNoteModalOpen(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="primary">
-                  Save Note
-                </button>
-              </div>
-            </form>
-          </div>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <form onSubmit={handleSaveNote} className="card" style={{ width: 440, display: "grid", gap: "1rem", background: "#fff" }}>
+            <h3 style={{ margin: 0 }}>Add Private Note</h3>
+            <textarea
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              placeholder="Write your private note here (strictly isolated to your account)..."
+              rows={4}
+              required
+              style={{ width: "100%", padding: "0.5rem" }}
+            />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="sm" onClick={() => setNoteModalOpen(false)}>
+                Cancel
+              </button>
+              <button type="submit" className="primary sm">
+                Save Note
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
-      {/* Confusion Explanation Modal */}
       {confusionModalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
-            padding: "1rem",
-          }}
-        >
-          <div className="card" style={{ maxWidth: 520, width: "100%", background: "var(--color-surface)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-              <span className="badge tag-interpretation">AI ASSISTANT EXPLANATION</span>
-              <button className="sm" onClick={() => setConfusionModalOpen(false)}>
-                ✕
-              </button>
-            </div>
-            <h3 style={{ margin: "0.25rem 0 1rem" }}>Instant Concept Clarification</h3>
-
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }}>
+          <div className="card" style={{ width: 500, display: "grid", gap: "1rem", background: "#fff" }}>
+            <h3 style={{ margin: 0 }}>🤔 Instant Clarification</h3>
             {confusionLoading ? (
-              <p>Analyzing lecture context and generating explanation...</p>
-            ) : activeConfusionData?.aiExplanation ? (
-              <div style={{ display: "grid", gap: "0.75rem", fontSize: "0.9rem" }}>
-                <div>
-                  <strong>Simple Explanation:</strong>
-                  <p style={{ margin: "4px 0" }}>
-                    {activeConfusionData.aiExplanation.simpleExplanation || "Core principle explained."}
-                  </p>
-                </div>
-                {activeConfusionData.aiExplanation.detailedExplanation && (
-                  <div>
-                    <strong>Detailed Breakdown:</strong>
-                    <p style={{ margin: "4px 0" }}>{activeConfusionData.aiExplanation.detailedExplanation}</p>
-                  </div>
-                )}
-                {activeConfusionData.aiExplanation.example && (
-                  <div style={{ background: "var(--color-surface-hover)", padding: "0.6rem", borderRadius: "var(--radius)" }}>
-                    <strong>Example:</strong> {activeConfusionData.aiExplanation.example}
-                  </div>
-                )}
-              </div>
+              <p>Analyzing concept...</p>
             ) : (
-              <p>Explanation saved to your study log.</p>
-            )}
-
-            <div style={{ marginTop: "1.25rem", textAlign: "right" }}>
-              <button className="primary sm" onClick={() => setConfusionModalOpen(false)}>
-                Got it
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Question Modal */}
-      {questionModalOpen && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 100,
-            padding: "1rem",
-          }}
-        >
-          <div className="card" style={{ maxWidth: 480, width: "100%", background: "var(--color-surface)" }}>
-            <h3 style={{ marginTop: 0 }}>Ask a Question</h3>
-            <form onSubmit={handleAskQuestion} style={{ display: "grid", gap: "0.75rem" }}>
-              <textarea
-                value={questionText}
-                onChange={(e) => setQuestionText(e.target.value)}
-                placeholder="What would you like clarified about this moment in the lecture?"
-                rows={4}
-                required
-                style={{ width: "100%" }}
-              />
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-                <button type="button" onClick={() => setQuestionModalOpen(false)}>
-                  Cancel
-                </button>
-                <button type="submit" className="primary">
-                  Record Question
-                </button>
+              <div>
+                <p style={{ fontSize: "0.95rem", lineHeight: "1.6" }}>
+                  {activeConfusionData?.aiExplanation?.simplified || "This concept explores the core behavioral dynamics discussed in the lecture."}
+                </p>
+                <div style={{ marginTop: "1rem", display: "flex", justifyContent: "flex-end" }}>
+                  <button className="primary sm" onClick={() => setConfusionModalOpen(false)}>
+                    Got it, thanks!
+                  </button>
+                </div>
               </div>
-            </form>
+            )}
           </div>
         </div>
       )}

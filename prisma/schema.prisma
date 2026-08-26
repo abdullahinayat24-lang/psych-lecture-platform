@@ -106,6 +106,8 @@ model Lecture {
   primaryLanguage LectureLanguage @default(MIXED_URDU_ENGLISH)
   plannedDuration Int?            // seconds; informational only, never a hard cap
   actualDuration  Int?            // seconds, set on STOP & SAVE
+  seriesName      String?
+  partNumber      Int?
   status          LectureStatus   @default(DRAFT)
   lectureDate     DateTime        @default(now())
 
@@ -119,6 +121,7 @@ model Lecture {
   recordings        LectureRecording[]
   speakers          Speaker[]
   transcriptSegments TranscriptSegment[]
+  boardImages        LectureImage[]
   lectureTopics      LectureTopic[]
   topicOccurrences    TopicOccurrence[]
   aiAnalyses         AiAnalysis[]
@@ -131,6 +134,7 @@ model Lecture {
   highlights         Highlight[]
 
   @@index([status])
+  @@index([seriesName])
   @@index([lectureDate])
   @@index([createdById])
 }
@@ -537,3 +541,38 @@ model AuditLog {
   @@index([actorId])
   @@index([entityType, entityId])
 }
+
+// ------------------------------------------------------------
+// WHITEBOARD / BOARD IMAGES & DIAGRAMS
+// ------------------------------------------------------------
+
+model LectureImage {
+  id           String   @id @default(cuid())
+  lectureId    String
+  lecture      Lecture  @relation(fields: [lectureId], references: [id], onDelete: Cascade)
+  imageUrl     String   @db.Text // Base64 data URL or storage URL
+  caption      String?
+  timestampSec Float?   // Timestamp in audio where board was drawn
+  sequenceOrder Int     @default(0)
+  createdAt    DateTime @default(now())
+
+  @@index([lectureId, timestampSec])
+}
+
+// ------------------------------------------------------------
+// INSTRUCTOR LEXICON / CODE-WORD DICTIONARY
+// (e.g. "Shaheed" = Covert Narcissist / Martyr Syndrome)
+// ------------------------------------------------------------
+
+model GlossaryTerm {
+  id          String   @id @default(cuid())
+  term        String   @unique
+  definition  String   @db.Text
+  category    String   @default("Instructor Code Words") // "Instructor Code Words", "Music Theory", "Psychology", "CSS", "Philosophy"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([term])
+  @@index([category])
+}
+

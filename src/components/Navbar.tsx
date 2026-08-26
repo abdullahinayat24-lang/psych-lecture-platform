@@ -87,6 +87,9 @@ export function Navbar() {
               <NavLink href="/topics" active={pathname.startsWith("/topics")}>
                 Knowledge Graph
               </NavLink>
+              <NavLink href="/lexicon" active={pathname.startsWith("/lexicon")}>
+                Lexicon &amp; Slang
+              </NavLink>
               <NavLink href="/search" active={pathname === "/search"}>
                 Search
               </NavLink>
