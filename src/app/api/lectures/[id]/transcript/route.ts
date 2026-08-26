@@ -4,7 +4,9 @@ import { prisma } from "@/lib/db";
 import { requireUser, requireTeacher, ApiError, handleApiError } from "@/lib/rbac";
 import { logAudit } from "@/lib/audit";
 
-// GET /api/lectures/:id/transcript — structured, timestamped segments (section 7).
+export const dynamic = "force-dynamic";
+
+// GET /api/lectures/:id/transcript — structured, timestamped segments.
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
@@ -27,8 +29,77 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
   }
 }
 
-// PATCH /api/lectures/:id/transcript — teacher corrections only (section 21).
-// Students can never modify transcripts, enforced here regardless of frontend state.
+// POST /api/lectures/:id/transcript — add segment or replace entire transcript text
+const createSchema = z.object({
+  text: z.string().min(1),
+  replaceFull: z.boolean().optional(),
+  startTimeSec: z.number().nonnegative().optional(),
+  endTimeSec: z.number().nonnegative().optional(),
+  segmentType: z.enum([
+    "TEACHER_EXPLANATION",
+    "STUDENT_QUESTION",
+    "TEACHER_ANSWER",
+    "DISCUSSION",
+    "EXAMPLE",
+    "IMPORTANT",
+    "OTHER",
+  ]).optional(),
+});
+
+export async function POST(req: Request, { params }: { params: { id: string } }) {
+  try {
+    const user = await requireTeacher();
+    const body = await req.json();
+    const parsed = createSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid input", details: parsed.error.flatten() }, { status: 400 });
+    }
+
+    const defaultSpeaker = await prisma.speaker.upsert({
+      where: { lectureId_rawLabel: { lectureId: params.id, rawLabel: "SPEAKER_00" } },
+      create: {
+        lectureId: params.id,
+        rawLabel: "SPEAKER_00",
+        displayName: "Teacher",
+        role: "TEACHER",
+      },
+      update: {},
+    });
+
+    if (parsed.data.replaceFull) {
+      await prisma.transcriptSegment.deleteMany({ where: { lectureId: params.id } });
+    }
+
+    const segment = await prisma.transcriptSegment.create({
+      data: {
+        lectureId: params.id,
+        speakerId: defaultSpeaker.id,
+        speakerRole: "TEACHER",
+        startTimeSec: parsed.data.startTimeSec ?? 0,
+        endTimeSec: parsed.data.endTimeSec ?? 10,
+        text: parsed.data.text.trim(),
+        language: "MIXED_URDU_ENGLISH",
+        confidence: 1.0,
+        segmentType: parsed.data.segmentType ?? "TEACHER_EXPLANATION",
+      },
+      include: { speaker: true },
+    });
+
+    await logAudit({
+      actorId: user.id,
+      action: "transcript.create",
+      entityType: "TranscriptSegment",
+      entityId: segment.id,
+      metadata: { replaceFull: parsed.data.replaceFull },
+    });
+
+    return NextResponse.json({ segment });
+  } catch (err) {
+    return handleApiError(err);
+  }
+}
+
+// PATCH /api/lectures/:id/transcript — teacher corrections
 const correctionSchema = z.object({
   segmentId: z.string(),
   text: z.string().min(1).optional(),
@@ -68,6 +139,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     const updated = await prisma.transcriptSegment.update({
       where: { id: segmentId },
       data: { ...updates, isEdited: true, editedById: user.id },
+      include: { speaker: true },
     });
 
     await logAudit({

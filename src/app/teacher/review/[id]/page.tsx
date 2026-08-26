@@ -22,10 +22,15 @@ export default function TeacherReviewPage() {
     "KEY_CONCEPTS",
     "REVISION_NOTES",
     "STUDY_QUESTIONS",
+    "FLASHCARDS",
+    "LECTURE_OUTLINE",
   ]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   // Edit states
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+
   const [editingSpeakerId, setEditingSpeakerId] = useState<string | null>(null);
   const [speakerNameDraft, setSpeakerNameDraft] = useState("");
   const [speakerRoleDraft, setSpeakerRoleDraft] = useState("TEACHER");
@@ -33,6 +38,10 @@ export default function TeacherReviewPage() {
   const [editingSegmentId, setEditingSegmentId] = useState<string | null>(null);
   const [segmentTextDraft, setSegmentTextDraft] = useState("");
   const [segmentTypeDraft, setSegmentTypeDraft] = useState("TEACHER_EXPLANATION");
+
+  const [showPasteBox, setShowPasteBox] = useState(false);
+  const [pasteTranscriptText, setPasteTranscriptText] = useState("");
+  const [isSavingTranscript, setIsSavingTranscript] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -50,6 +59,7 @@ export default function TeacherReviewPage() {
       if (lecRes.ok) {
         const d = await lecRes.json();
         setLecture(d.lecture);
+        setTitleDraft(d.lecture?.title || "");
         setSpeakers(d.lecture?.speakers || []);
       }
       if (transRes.ok) {
@@ -64,6 +74,21 @@ export default function TeacherReviewPage() {
       console.error("Load review data error:", err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function updateTitle() {
+    if (!titleDraft.trim()) return;
+
+    const res = await fetch(`/api/lectures/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: titleDraft.trim() }),
+    });
+
+    if (res.ok) {
+      setIsEditingTitle(false);
+      loadData();
     }
   }
 
@@ -100,6 +125,38 @@ export default function TeacherReviewPage() {
     if (res.ok) {
       setEditingSegmentId(null);
       loadData();
+    }
+  }
+
+  async function handlePasteFullTranscript() {
+    if (!pasteTranscriptText.trim()) {
+      alert("Please paste some transcript text first.");
+      return;
+    }
+
+    setIsSavingTranscript(true);
+    try {
+      const res = await fetch(`/api/lectures/${id}/transcript`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: pasteTranscriptText.trim(),
+          replaceFull: true,
+        }),
+      });
+
+      if (res.ok) {
+        setShowPasteBox(false);
+        setPasteTranscriptText("");
+        await loadData();
+        alert("Transcript updated successfully! You can now run the AI Extraction Pipeline.");
+      } else {
+        alert("Failed to update transcript.");
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to save transcript");
+    } finally {
+      setIsSavingTranscript(false);
     }
   }
 
@@ -146,6 +203,19 @@ export default function TeacherReviewPage() {
     }
   }
 
+  async function approveAllAi() {
+    for (const item of analyses) {
+      if (!item.approvedByTeacher) {
+        await fetch(`/api/ai/${item.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ approved: true }),
+        });
+      }
+    }
+    loadData();
+  }
+
   async function togglePublish() {
     if (!lecture) return;
     const nextStatus = lecture.status === "PUBLISHED" ? "IN_REVIEW" : "PUBLISHED";
@@ -180,7 +250,7 @@ export default function TeacherReviewPage() {
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto", padding: "2rem 1.25rem" }}>
-      {/* Top Banner */}
+      {/* Top Navigation */}
       <div
         style={{
           display: "flex",
@@ -193,7 +263,7 @@ export default function TeacherReviewPage() {
       >
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-            <Link href="/dashboard" style={{ fontSize: "0.85rem" }}>
+            <Link href="/dashboard" style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
               ← Dashboard
             </Link>
             <span style={{ color: "var(--color-border)" }}>/</span>
@@ -201,9 +271,34 @@ export default function TeacherReviewPage() {
               {lecture.status}
             </span>
           </div>
-          <h1 style={{ margin: "0 0 4px" }}>{lecture.title}</h1>
-          <p style={{ color: "var(--color-text-muted)", margin: 0 }}>
-            Recorded on {new Date(lecture.lectureDate).toLocaleDateString()} · {lecture.primaryLanguage}
+
+          {/* Editable Title */}
+          {isEditingTitle ? (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", margin: "0.5rem 0" }}>
+              <input
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                style={{ fontSize: "1.25rem", padding: "0.4rem 0.75rem", width: 450, fontWeight: 700 }}
+                placeholder="Lecture Title..."
+              />
+              <button className="primary sm" onClick={updateTitle}>
+                Save Title
+              </button>
+              <button className="sm" onClick={() => setIsEditingTitle(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <h1 style={{ margin: "0 0 4px" }}>{lecture.title}</h1>
+              <button className="sm" onClick={() => setIsEditingTitle(true)} title="Rename lecture">
+                ✏️ Rename
+              </button>
+            </div>
+          )}
+
+          <p style={{ color: "var(--color-text-muted)", margin: 0, fontSize: "0.9rem" }}>
+            Recorded on {new Date(lecture.lectureDate).toLocaleDateString()} · {lecture.category} · {lecture.primaryLanguage}
           </p>
         </div>
 
@@ -222,7 +317,7 @@ export default function TeacherReviewPage() {
         <section className="card">
           <h2 style={{ fontSize: "1.2rem", marginBottom: "0.5rem" }}>👥 Speaker Identification & Roles</h2>
           <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: "0 0 1rem" }}>
-            Rename raw acoustic labels (e.g. SPEAKER_00) to actual names and designate Instructor vs Student roles.
+            Designate Instructor vs Student roles.
           </p>
 
           <div style={{ display: "grid", gap: "0.75rem" }}>
@@ -248,7 +343,7 @@ export default function TeacherReviewPage() {
                     <select
                       value={speakerRoleDraft}
                       onChange={(e) => setSpeakerRoleDraft(e.target.value)}
-                      style={{ padding: "0.3rem 0.6rem", fontSize: "0.85rem" }}
+                      style={{ padding: "0.3rem 0.6rem", fontSize: "0.9rem" }}
                     >
                       <option value="TEACHER">TEACHER</option>
                       <option value="STUDENT">STUDENT</option>
@@ -263,10 +358,12 @@ export default function TeacherReviewPage() {
                   </div>
                 ) : (
                   <>
-                    <div>
-                      <strong>{spk.displayName}</strong>{" "}
-                      <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>({spk.rawLabel})</span>
-                      <span className="badge tag-source" style={{ marginLeft: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <strong>{spk.displayName}</strong>
+                      <span style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                        ({spk.rawLabel})
+                      </span>
+                      <span className={`badge ${spk.role === "TEACHER" ? "tag-source" : "tag-interpretation"}`}>
                         {spk.role}
                       </span>
                     </div>
@@ -284,136 +381,58 @@ export default function TeacherReviewPage() {
                 )}
               </div>
             ))}
-            {speakers.length === 0 && (
-              <p style={{ color: "var(--color-text-muted)", fontSize: "0.85rem" }}>
-                No speakers identified yet. Diarization will populate speakers once transcription finishes.
-              </p>
-            )}
-          </div>
-        </section>
-
-        {/* AI Analysis Suite */}
-        <section className="card">
-          <h2 style={{ fontSize: "1.2rem", marginBottom: "0.5rem" }}>🤖 AI Extraction & Teacher Supervision</h2>
-          <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: "0 0 1rem" }}>
-            Generate structured analyses. AI outputs are marked as <strong>INTERPRETATION</strong> and are{" "}
-            <strong>never visible to students until you explicitly approve them</strong>.
-          </p>
-
-          {/* Trigger Box */}
-          <div
-            style={{
-              background: "var(--color-surface-hover)",
-              padding: "1rem",
-              borderRadius: "var(--radius)",
-              marginBottom: "1.5rem",
-            }}
-          >
-            <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.5rem" }}>
-              Select Analyses to Generate:
-            </div>
-            <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "1rem" }}>
-              {[
-                { key: "SUMMARY_DETAILED", label: "Detailed Summary" },
-                { key: "KEY_CONCEPTS", label: "Key Concepts" },
-                { key: "REVISION_NOTES", label: "Revision Notes" },
-                { key: "STUDY_QUESTIONS", label: "Study Questions" },
-                { key: "FLASHCARDS", label: "Flashcards" },
-                { key: "LECTURE_OUTLINE", label: "Outline" },
-              ].map((opt) => (
-                <label key={opt.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem" }}>
-                  <input
-                    type="checkbox"
-                    checked={selectedAiTypes.includes(opt.key)}
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedAiTypes([...selectedAiTypes, opt.key]);
-                      } else {
-                        setSelectedAiTypes(selectedAiTypes.filter((k) => k !== opt.key));
-                      }
-                    }}
-                  />
-                  {opt.label}
-                </label>
-              ))}
-            </div>
-
-            <button className="primary" onClick={runAiPipeline} disabled={isAnalyzing}>
-              {isAnalyzing ? "🧠 Running AI Pipeline..." : "⚡ Run AI Extraction Pipeline"}
-            </button>
-          </div>
-
-          {/* Generated Analyses List */}
-          <div style={{ display: "grid", gap: "1rem" }}>
-            {analyses.map((item) => (
-              <div
-                key={item.id}
-                style={{
-                  border: "1px solid var(--color-border)",
-                  borderRadius: "var(--radius)",
-                  padding: "1rem",
-                  background: item.approvedByTeacher ? "var(--color-success-bg)" : "var(--color-surface)",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: "0.75rem",
-                  }}
-                >
-                  <div>
-                    <span className="badge tag-interpretation">{item.type}</span>
-                    <span style={{ fontSize: "0.78rem", color: "var(--color-text-muted)", marginLeft: 8 }}>
-                      Model: {item.modelUsed}
-                    </span>
-                  </div>
-                  <button
-                    className={`sm ${item.approvedByTeacher ? "danger" : "primary"}`}
-                    onClick={() => toggleAiApproval(item.id, item.approvedByTeacher)}
-                  >
-                    {item.approvedByTeacher ? "✓ Approved (Click to Revoke)" : "Approve for Students"}
-                  </button>
-                </div>
-
-                <div
-                  style={{
-                    fontSize: "0.9rem",
-                    background: "var(--color-surface)",
-                    padding: "0.75rem",
-                    borderRadius: "var(--radius)",
-                    maxHeight: 250,
-                    overflowY: "auto",
-                  }}
-                >
-                  <pre
-                    style={{
-                      margin: 0,
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "inherit",
-                      fontSize: "0.85rem",
-                    }}
-                  >
-                    {JSON.stringify(item.content, null, 2)}
-                  </pre>
-                </div>
-              </div>
-            ))}
-            {analyses.length === 0 && (
-              <p style={{ color: "var(--color-text-muted)", fontSize: "0.85rem" }}>
-                No AI analyses generated yet. Select analysis types above and run the pipeline.
-              </p>
-            )}
           </div>
         </section>
 
         {/* Verbatim Transcript Segments Editor */}
         <section className="card">
-          <h2 style={{ fontSize: "1.2rem", marginBottom: "0.5rem" }}>📜 Transcript Editor & Timestamp Segments</h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+            <h2 style={{ fontSize: "1.2rem", margin: 0 }}>📜 Transcript Editor & Verbatim Content</h2>
+            <button className="sm" onClick={() => setShowPasteBox(!showPasteBox)}>
+              {showPasteBox ? "Close Editor" : "➕ Edit / Paste Full Lecture Text"}
+            </button>
+          </div>
+
           <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: "0 0 1rem" }}>
-            Review, edit, and classify transcript segments (Teacher Explanation, Student Question, Case Example).
+            The AI extraction pipeline generates summaries and flashcards directly from these transcript segments.
           </p>
+
+          {/* Paste / Replace Full Transcript Modal Box */}
+          {showPasteBox && (
+            <div
+              style={{
+                background: "var(--color-surface-hover)",
+                padding: "1rem",
+                borderRadius: "var(--radius)",
+                marginBottom: "1.5rem",
+                border: "1px solid var(--color-border)",
+              }}
+            >
+              <strong style={{ fontSize: "0.95rem" }}>Paste or Type Lecture Text:</strong>
+              <p style={{ fontSize: "0.82rem", color: "var(--color-text-muted)", margin: "4px 0 8px" }}>
+                Paste your verbatim notes or speech (e.g. your lecture on Narcissism, Attention, and Competition):
+              </p>
+              <textarea
+                value={pasteTranscriptText}
+                onChange={(e) => setPasteTranscriptText(e.target.value)}
+                placeholder="Main Idea: Narcissists may appear confident and successful, but many experience chronic dissatisfaction because their self-worth depends heavily on external validation and maintaining an idealized self-image. 1. Constant Need for Attention... 2. Everything Becomes a Competition..."
+                rows={6}
+                style={{ width: "100%", padding: "0.75rem", fontSize: "0.92rem", marginBottom: "0.75rem" }}
+              />
+              <div style={{ display: "flex", gap: 8 }}>
+                <button
+                  className="primary sm"
+                  onClick={handlePasteFullTranscript}
+                  disabled={isSavingTranscript}
+                >
+                  {isSavingTranscript ? "Updating..." : "💾 Save as Lecture Transcript"}
+                </button>
+                <button className="sm" onClick={() => setShowPasteBox(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           <div style={{ display: "grid", gap: "0.75rem", maxHeight: 500, overflowY: "auto" }}>
             {segments.map((seg) => (
@@ -495,7 +514,181 @@ export default function TeacherReviewPage() {
             ))}
             {segments.length === 0 && (
               <p style={{ color: "var(--color-text-muted)", fontSize: "0.85rem" }}>
-                No transcript segments available.
+                No transcript segments available. Click &quot;Edit / Paste Full Lecture Text&quot; above to add content.
+              </p>
+            )}
+          </div>
+        </section>
+
+        {/* AI Extraction & Teacher Supervision */}
+        <section className="card">
+          <h2 style={{ fontSize: "1.2rem", marginBottom: "0.5rem" }}>🤖 AI Extraction & Study Suite</h2>
+          <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: "0 0 1rem" }}>
+            Generate structured clinical analyses based on the lecture transcript. Approve them before students see them.
+          </p>
+
+          {/* Trigger Box */}
+          <div
+            style={{
+              background: "var(--color-surface-hover)",
+              padding: "1rem",
+              borderRadius: "var(--radius)",
+              marginBottom: "1.5rem",
+            }}
+          >
+            <div style={{ fontWeight: 600, fontSize: "0.9rem", marginBottom: "0.5rem" }}>
+              Select Analyses to Generate:
+            </div>
+            <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap", marginBottom: "1rem" }}>
+              {[
+                { key: "SUMMARY_DETAILED", label: "Detailed Summary" },
+                { key: "KEY_CONCEPTS", label: "Key Concepts" },
+                { key: "REVISION_NOTES", label: "Revision Notes" },
+                { key: "STUDY_QUESTIONS", label: "Study Questions" },
+                { key: "FLASHCARDS", label: "Flashcards" },
+                { key: "LECTURE_OUTLINE", label: "Outline" },
+              ].map((opt) => (
+                <label key={opt.key} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: "0.88rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedAiTypes.includes(opt.key)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedAiTypes([...selectedAiTypes, opt.key]);
+                      } else {
+                        setSelectedAiTypes(selectedAiTypes.filter((k) => k !== opt.key));
+                      }
+                    }}
+                  />
+                  {opt.label}
+                </label>
+              ))}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <button className="primary" onClick={runAiPipeline} disabled={isAnalyzing}>
+                {isAnalyzing ? "🧠 Running AI Pipeline..." : "⚡ Run AI Extraction Pipeline"}
+              </button>
+              {analyses.length > 0 && (
+                <button onClick={approveAllAi} style={{ fontSize: "0.88rem" }}>
+                  ✓ Approve All for Students
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Generated Analyses List */}
+          <div style={{ display: "grid", gap: "1rem" }}>
+            {analyses.map((item) => {
+              const content = item.content || {};
+              return (
+                <div
+                  key={item.id}
+                  style={{
+                    border: "1px solid var(--color-border)",
+                    borderRadius: "var(--radius)",
+                    padding: "1.25rem",
+                    background: item.approvedByTeacher ? "var(--color-surface)" : "var(--color-surface)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: "0.75rem",
+                    }}
+                  >
+                    <div>
+                      <span className="badge tag-interpretation" style={{ fontSize: "0.85rem", fontWeight: 600 }}>
+                        {item.type.replace("_", " ")}
+                      </span>
+                      {item.approvedByTeacher && (
+                        <span className="badge tag-source" style={{ marginLeft: 8 }}>
+                          ✓ Approved for Students
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      className={`sm ${item.approvedByTeacher ? "danger" : "primary"}`}
+                      onClick={() => toggleAiApproval(item.id, item.approvedByTeacher)}
+                    >
+                      {item.approvedByTeacher ? "Revoke Approval" : "✓ Approve for Students"}
+                    </button>
+                  </div>
+
+                  {/* Clean Formatted Output */}
+                  <div style={{ fontSize: "0.95rem", lineHeight: "1.6" }}>
+                    {/* Summary */}
+                    {content.summary && <p style={{ margin: "0 0 0.5rem" }}>{content.summary}</p>}
+
+                    {/* Key Concepts */}
+                    {Array.isArray(content.concepts) && (
+                      <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.5rem" }}>
+                        {content.concepts.map((c: any, i: number) => (
+                          <div key={i} style={{ background: "var(--color-surface-hover)", padding: "0.5rem 0.75rem", borderRadius: "var(--radius)" }}>
+                            <strong>{c.term}:</strong> {c.definition}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Revision Points */}
+                    {Array.isArray(content.points) && (
+                      <ul style={{ margin: "0.5rem 0", paddingLeft: "1.25rem" }}>
+                        {content.points.map((p: any, i: number) => (
+                          <li key={i}>{typeof p === "string" ? p : p.text}</li>
+                        ))}
+                      </ul>
+                    )}
+
+                    {/* Study Questions */}
+                    {Array.isArray(content.questions) && (
+                      <ol style={{ margin: "0.5rem 0", paddingLeft: "1.25rem" }}>
+                        {content.questions.map((q: any, i: number) => (
+                          <li key={i}>{typeof q === "string" ? q : q.text}</li>
+                        ))}
+                      </ol>
+                    )}
+
+                    {/* Flashcards */}
+                    {Array.isArray(content.cards) && (
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: "0.75rem", marginTop: "0.5rem" }}>
+                        {content.cards.map((card: any, i: number) => (
+                          <div key={i} style={{ border: "1px solid var(--color-border)", padding: "0.75rem", borderRadius: "var(--radius)", background: "var(--color-surface-hover)" }}>
+                            <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", textTransform: "uppercase" }}>Question</div>
+                            <strong>{card.front}</strong>
+                            <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", textTransform: "uppercase", marginTop: "0.5rem" }}>Answer</div>
+                            <div>{card.back}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Outline */}
+                    {Array.isArray(content.outline) && (
+                      <div style={{ display: "grid", gap: "0.5rem", marginTop: "0.5rem" }}>
+                        {content.outline.map((o: any, i: number) => (
+                          <div key={i}>
+                            <strong>{o.heading}</strong>
+                            {Array.isArray(o.subpoints) && (
+                              <ul style={{ margin: "0.25rem 0 0.5rem", paddingLeft: "1.25rem", color: "var(--color-text-muted)" }}>
+                                {o.subpoints.map((sp: string, spi: number) => (
+                                  <li key={spi}>{sp}</li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {analyses.length === 0 && (
+              <p style={{ color: "var(--color-text-muted)", fontSize: "0.85rem" }}>
+                No AI analyses generated yet. Select analysis types above and click &quot;Run AI Extraction Pipeline&quot;.
               </p>
             )}
           </div>

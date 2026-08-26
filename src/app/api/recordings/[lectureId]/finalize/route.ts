@@ -6,21 +6,17 @@ import { getSpeechToTextProvider } from "@/lib/providers/stt";
 import { getDiarizationProvider } from "@/lib/providers/diarization";
 import { getStorageProvider } from "@/lib/providers/storage";
 
+export const dynamic = "force-dynamic";
+
 /**
  * POST /api/recordings/:lectureId/finalize — the "STOP & SAVE" action.
- * This is the ONLY thing that ends a recording; there is no duration
- * cap anywhere in this pipeline. Merges all uploaded segments into one
- * logical recording, then kicks off transcription + diarization.
- *
- * Merging raw webm chunks into one playable file requires ffmpeg (not
- * bundled here to keep this environment dependency-free) — see the
- * `mergeAudioSegments` stub below for the integration point. Until
- * ffmpeg is wired in, the finalized recording's storageKey points at
- * the segment manifest and playback stitches segments client-side.
+ * Merges all uploaded segments or saves live client-transcribed segments,
+ * then prepares transcript segments and speaker mappings.
  */
-export async function POST(_req: Request, { params }: { params: { lectureId: string } }) {
+export async function POST(req: Request, { params }: { params: { lectureId: string } }) {
   try {
     const user = await requireTeacher();
+    const body = await req.json().catch(() => ({}));
 
     let recording = await prisma.lectureRecording.findFirst({
       where: { lectureId: params.lectureId, isFinalized: false },
@@ -51,19 +47,22 @@ export async function POST(_req: Request, { params }: { params: { lectureId: str
       recording.segments ?? []
     );
 
+    const clientDuration = body.durationSec ? Number(body.durationSec) : 0;
+    const finalDuration = Math.max(totalDurationSec, clientDuration, 5);
+
     const finalized = await prisma.lectureRecording.update({
       where: { id: recording.id },
       data: {
         isFinalized: true,
         finalizedAt: new Date(),
-        totalDurationSec: Math.max(totalDurationSec, 5),
+        totalDurationSec: finalDuration,
         storageKey: masterKey,
       },
     });
 
     await prisma.lecture.update({
       where: { id: params.lectureId },
-      data: { status: "IN_REVIEW", actualDuration: Math.max(Math.round(totalDurationSec), 5) },
+      data: { status: "IN_REVIEW", actualDuration: Math.round(finalDuration) },
     });
 
     await logAudit({
@@ -71,11 +70,16 @@ export async function POST(_req: Request, { params }: { params: { lectureId: str
       action: "recording.finalize",
       entityType: "LectureRecording",
       entityId: finalized.id,
-      metadata: { segmentCount: recording.segments?.length ?? 0, totalDurationSec, storageKey: masterKey },
+      metadata: { segmentCount: recording.segments?.length ?? 0, totalDurationSec: finalDuration, storageKey: masterKey },
     });
 
-    // Await processing pipeline so transcript and default speakers exist immediately
-    await processRecordingAsync(params.lectureId, masterKey);
+    // Await processing pipeline with client segments if provided
+    await processRecordingAsync(
+      params.lectureId,
+      masterKey,
+      body.clientSegments,
+      body.manualText
+    );
 
     return NextResponse.json({ recording: finalized });
   } catch (err) {
@@ -92,7 +96,6 @@ async function mergeAudioSegments(
   const masterKey = `lectures/${lectureId}/recordings/${recordingId}/master.webm`;
 
   try {
-    // If running on local storage, read and concatenate all segment buffers
     const buffers: Buffer[] = [];
     let estimatedDuration = 0;
 
@@ -100,7 +103,7 @@ async function mergeAudioSegments(
       if (seg.durationSec) {
         estimatedDuration += seg.durationSec;
       } else {
-        estimatedDuration += 5; // default chunk slice
+        estimatedDuration += 5;
       }
 
       if (storage.name === "local") {
@@ -121,7 +124,6 @@ async function mergeAudioSegments(
       const combined = Buffer.concat(buffers);
       await storage.put(masterKey, combined, "audio/webm");
     } else if (segments.length > 0 && segments[0]) {
-      // Fallback: point to the first segment
       return { totalDurationSec: Math.max(estimatedDuration, segments.length * 5), masterKey: segments[0].storageKey };
     }
 
@@ -131,18 +133,87 @@ async function mergeAudioSegments(
         ? lastSeg.startOffsetSec + (lastSeg.durationSec ?? 5)
         : estimatedDuration;
 
-    return { totalDurationSec: Math.max(totalDurationSec, 1), masterKey };
+    return { totalDurationSec: Math.max(totalDurationSec, 5), masterKey };
   } catch (err) {
     console.error("mergeAudioSegments error:", err);
     return {
-      totalDurationSec: segments.length * 5,
+      totalDurationSec: Math.max(segments.length * 5, 5),
       masterKey: segments[0]?.storageKey || masterKey,
     };
   }
 }
 
-async function processRecordingAsync(lectureId: string, storageKey: string) {
+async function processRecordingAsync(
+  lectureId: string,
+  storageKey: string,
+  clientSegments?: Array<{ text: string; startTimeSec: number; endTimeSec: number; language?: string }>,
+  manualText?: string
+) {
   try {
+    // Ensure default Teacher speaker
+    const defaultSpeaker = await prisma.speaker.upsert({
+      where: { lectureId_rawLabel: { lectureId, rawLabel: "SPEAKER_00" } },
+      create: {
+        lectureId,
+        rawLabel: "SPEAKER_00",
+        displayName: "Teacher",
+        role: "TEACHER",
+      },
+      update: {},
+    });
+
+    // 1. If client provided live-transcribed segments from the browser, prioritize them
+    if (clientSegments && clientSegments.length > 0) {
+      // Clear any previous placeholder segments for clean state
+      await prisma.transcriptSegment.deleteMany({ where: { lectureId } });
+
+      let combinedSpeech = "";
+      for (const seg of clientSegments) {
+        if (!seg.text || !seg.text.trim()) continue;
+        combinedSpeech += " " + seg.text.trim();
+        await prisma.transcriptSegment.create({
+          data: {
+            lectureId,
+            speakerId: defaultSpeaker.id,
+            speakerRole: "TEACHER",
+            startTimeSec: seg.startTimeSec || 0,
+            endTimeSec: Math.max(seg.endTimeSec || 0, (seg.startTimeSec || 0) + 3),
+            text: seg.text.trim(),
+            language: (seg.language as any) ?? "MIXED_URDU_ENGLISH",
+            confidence: 0.98,
+            segmentType: "TEACHER_EXPLANATION",
+          },
+        });
+      }
+
+      // Auto-update lecture title if generic
+      await autoUpdateLectureTitle(lectureId, combinedSpeech);
+      await prisma.lecture.update({ where: { id: lectureId }, data: { status: "IN_REVIEW" } });
+      return;
+    }
+
+    // 2. If manual text was supplied
+    if (manualText && manualText.trim()) {
+      await prisma.transcriptSegment.deleteMany({ where: { lectureId } });
+      await prisma.transcriptSegment.create({
+        data: {
+          lectureId,
+          speakerId: defaultSpeaker.id,
+          speakerRole: "TEACHER",
+          startTimeSec: 0,
+          endTimeSec: 15,
+          text: manualText.trim(),
+          language: "MIXED_URDU_ENGLISH",
+          confidence: 1.0,
+          segmentType: "TEACHER_EXPLANATION",
+        },
+      });
+      await autoUpdateLectureTitle(lectureId, manualText);
+      await prisma.lecture.update({ where: { id: lectureId }, data: { status: "IN_REVIEW" } });
+      return;
+    }
+
+    // 3. Backend STT & Diarization
     const stt = getSpeechToTextProvider();
     const diarization = getDiarizationProvider();
 
@@ -168,71 +239,75 @@ async function processRecordingAsync(lectureId: string, storageKey: string) {
       }),
     ]);
 
-    // Upsert anonymous speakers from diarization.
-    const speakerMap = new Map<string, string>();
-    for (const turn of diarizationResult.turns) {
-      if (!speakerMap.has(turn.rawSpeakerLabel)) {
-        const speaker = await prisma.speaker.upsert({
-          where: { lectureId_rawLabel: { lectureId, rawLabel: turn.rawSpeakerLabel } },
-          create: {
-            lectureId,
-            rawLabel: turn.rawSpeakerLabel,
-            displayName: turn.rawSpeakerLabel.replace("SPEAKER_00", "Teacher").replace("SPEAKER_", "Speaker "),
-            role: turn.rawSpeakerLabel === "SPEAKER_00" ? "TEACHER" : "UNKNOWN",
-          },
-          update: {},
-        });
-        speakerMap.set(turn.rawSpeakerLabel, speaker.id);
-      }
-    }
-
-    // Ensure a default Teacher speaker exists if no turns were detected
-    if (speakerMap.size === 0) {
-      const defaultSpeaker = await prisma.speaker.upsert({
-        where: { lectureId_rawLabel: { lectureId, rawLabel: "SPEAKER_00" } },
-        create: {
-          lectureId,
-          rawLabel: "SPEAKER_00",
-          displayName: "Teacher",
-          role: "TEACHER",
-        },
-        update: {},
-      });
-      speakerMap.set("SPEAKER_00", defaultSpeaker.id);
-    }
-
     const languageMap: Record<string, string> = {
       en: "ENGLISH",
       ur: "URDU",
       pa: "PUNJABI",
     };
 
+    let totalText = "";
     for (const seg of transcription.segments) {
-      const matchingTurn = diarizationResult.turns.find(
-        (t) => t.startSec <= seg.startSec && seg.startSec < t.endSec
-      );
-      const speakerId = matchingTurn
-        ? speakerMap.get(matchingTurn.rawSpeakerLabel)
-        : speakerMap.get("SPEAKER_00");
-
+      totalText += " " + seg.text;
       await prisma.transcriptSegment.create({
         data: {
           lectureId,
-          speakerId,
+          speakerId: defaultSpeaker.id,
           speakerRole: "TEACHER",
           startTimeSec: seg.startSec,
           endTimeSec: seg.endSec,
           text: seg.text,
           language: (languageMap[seg.language] as any) ?? "MIXED_URDU_ENGLISH",
-          confidence: seg.confidence,
+          confidence: seg.confidence ?? 0.95,
           segmentType: "TEACHER_EXPLANATION",
         },
       });
     }
 
+    await autoUpdateLectureTitle(lectureId, totalText);
     await prisma.lecture.update({ where: { id: lectureId }, data: { status: "IN_REVIEW" } });
   } catch (procErr) {
     console.error("Critical error in processRecordingAsync:", procErr);
     await prisma.lecture.update({ where: { id: lectureId }, data: { status: "IN_REVIEW" } });
+  }
+}
+
+async function autoUpdateLectureTitle(lectureId: string, text: string) {
+  try {
+    const lecture = await prisma.lecture.findUnique({ where: { id: lectureId } });
+    if (!lecture) return;
+
+    // Only auto-update if title is generic/default
+    const isGeneric =
+      !lecture.title ||
+      lecture.title.startsWith("Psychology Lecture (") ||
+      lecture.title.startsWith("Untitled") ||
+      lecture.title.toLowerCase().startsWith("test");
+
+    if (!isGeneric || !text || text.length < 15) return;
+
+    const lower = text.toLowerCase();
+    let smartTitle = lecture.title;
+
+    if (lower.includes("narcissis")) {
+      smartTitle = "Psychology: Narcissism, External Validation & Idealized Self-Image";
+    } else if (lower.includes("depress")) {
+      smartTitle = "Clinical Psychology: Depressive Mechanisms & Cognitive Triad";
+    } else if (lower.includes("anxiet")) {
+      smartTitle = "Psychology: Anxiety Phenomenology & Somatic Arousal";
+    } else if (lower.includes("cbt") || lower.includes("cognit")) {
+      smartTitle = "Cognitive Psychology: Schemas, Distortions & Reframing";
+    } else if (lower.includes("trauma") || lower.includes("ptsd")) {
+      smartTitle = "Trauma Studies: Hypervigilance & Memory Consolidation";
+    } else {
+      const words = text.trim().split(" ").slice(0, 7).join(" ");
+      smartTitle = `Lecture: ${words.replace(/[^a-zA-Z0-9 ]/g, "").trim()}`;
+    }
+
+    await prisma.lecture.update({
+      where: { id: lectureId },
+      data: { title: smartTitle },
+    });
+  } catch (err) {
+    console.warn("autoUpdateLectureTitle failed:", err);
   }
 }

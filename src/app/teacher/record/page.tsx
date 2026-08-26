@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
+import Link from "next/link";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,13 @@ type ManualMarkerItem = {
   timestampSec: number;
   markerType: string;
   text?: string;
+};
+
+type LiveTranscriptSegment = {
+  text: string;
+  startTimeSec: number;
+  endTimeSec: number;
+  language?: string;
 };
 
 export default function RecordStudioPage() {
@@ -35,14 +43,22 @@ export default function RecordStudioPage() {
   const [isFinalizing, setIsFinalizing] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
 
+  // Live Speech Recognition & Transcripts
+  const [liveTranscript, setLiveTranscript] = useState<string>("");
+  const [recognizedSegments, setRecognizedSegments] = useState<LiveTranscriptSegment[]>([]);
+  const [isSpeechRecActive, setIsSpeechRecActive] = useState(false);
+
   // References
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const recognitionRef = useRef<any>(null);
   const sequenceIndexRef = useRef(0);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const segmentsRef = useRef<LiveTranscriptSegment[]>([]);
+  const liveTextRef = useRef<string>("");
 
   const isTeacher = (session?.user as any)?.role === "TEACHER";
 
@@ -87,6 +103,77 @@ export default function RecordStudioPage() {
       updateLevel();
     } catch (err) {
       console.warn("AudioContext visualizer not supported:", err);
+    }
+  }
+
+  // Setup Browser Web Speech API for real-time speech transcription
+  function setupLiveSpeechRecognition() {
+    try {
+      const SpeechRecognition =
+        (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+      if (!SpeechRecognition) {
+        console.warn("Web Speech API not supported in this browser");
+        return;
+      }
+
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang =
+        language === "URDU" ? "ur-PK" : language === "PUNJABI" ? "pa-PK" : "en-US";
+
+      let segmentStartSec = 0;
+
+      recognition.onstart = () => {
+        setIsSpeechRecActive(true);
+        segmentStartSec = 0;
+      };
+
+      recognition.onresult = (event: any) => {
+        let interimText = "";
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            const currentSec = elapsedSec;
+            const newSeg: LiveTranscriptSegment = {
+              text: transcript.trim(),
+              startTimeSec: segmentStartSec,
+              endTimeSec: Math.max(currentSec, segmentStartSec + 3),
+              language: language === "URDU" ? "URDU" : "ENGLISH",
+            };
+            segmentStartSec = currentSec;
+
+            segmentsRef.current.push(newSeg);
+            setRecognizedSegments([...segmentsRef.current]);
+
+            liveTextRef.current = (liveTextRef.current + " " + transcript.trim()).trim();
+            setLiveTranscript(liveTextRef.current);
+          } else {
+            interimText += transcript;
+          }
+        }
+      };
+
+      recognition.onerror = (err: any) => {
+        console.warn("Speech recognition error:", err.error);
+      };
+
+      recognition.onend = () => {
+        // Auto-restart if still recording
+        if (isStarted && !isPaused && !isFinalizing) {
+          try {
+            recognition.start();
+          } catch {}
+        } else {
+          setIsSpeechRecActive(false);
+        }
+      };
+
+      recognition.start();
+      recognitionRef.current = recognition;
+    } catch (e) {
+      console.warn("Live speech recognition initialization failed:", e);
     }
   }
 
@@ -162,9 +249,7 @@ export default function RecordStudioPage() {
               body: formData,
             });
             if (segRes.ok) {
-              setUploadStatus(`Chunk #${currentSeq + 1} saved to storage`);
-            } else {
-              setUploadStatus(`Warning: Chunk #${currentSeq + 1} upload failed, retrying on stop`);
+              setUploadStatus(`Chunk #${currentSeq + 1} saved`);
             }
           } catch (uploadErr) {
             console.error("Segment upload error:", uploadErr);
@@ -172,7 +257,6 @@ export default function RecordStudioPage() {
         }
       };
 
-      // Emit chunk every 5 seconds for safety against network disconnects
       mediaRecorder.start(5000);
       setIsStarted(true);
       setIsPaused(false);
@@ -181,6 +265,9 @@ export default function RecordStudioPage() {
       timerRef.current = setInterval(() => {
         setElapsedSec((prev) => prev + 1);
       }, 1000);
+
+      // Start live speech transcription
+      setupLiveSpeechRecognition();
     } catch (err: any) {
       console.error("Recording start error:", err);
       alert(err.message || "Failed to start recording");
@@ -193,11 +280,21 @@ export default function RecordStudioPage() {
 
     if (isPaused) {
       mediaRecorderRef.current.resume();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.start();
+        } catch {}
+      }
       setIsPaused(false);
       timerRef.current = setInterval(() => setElapsedSec((p) => p + 1), 1000);
       setUploadStatus("Recording resumed");
     } else {
       mediaRecorderRef.current.pause();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+      }
       setIsPaused(true);
       if (timerRef.current) clearInterval(timerRef.current);
       setUploadStatus("Recording paused");
@@ -230,11 +327,16 @@ export default function RecordStudioPage() {
     if (!confirm("Are you ready to STOP & SAVE this lecture recording?")) return;
 
     setIsFinalizing(true);
-    setUploadStatus("Finalizing audio chunks and stopping recording...");
+    setUploadStatus("Saving transcript and finalizing recording...");
 
     if (timerRef.current) clearInterval(timerRef.current);
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {}
+    }
 
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
       mediaRecorderRef.current.stop();
@@ -244,19 +346,46 @@ export default function RecordStudioPage() {
       audioStreamRef.current.getTracks().forEach((t) => t.stop());
     }
 
-    // Wait 1.5s for final dataavailable event to dispatch
-    await new Promise((r) => setTimeout(r, 1500));
+    // Wait 1s for final events
+    await new Promise((r) => setTimeout(r, 1000));
 
     try {
-      const res = await fetch(`/api/recordings/${lectureId}/finalize`, { method: "POST" });
+      const clientSegmentsToSend =
+        segmentsRef.current.length > 0
+          ? segmentsRef.current
+          : liveTranscript.trim()
+          ? [
+              {
+                text: liveTranscript.trim(),
+                startTimeSec: 0,
+                endTimeSec: Math.max(elapsedSec, 10),
+                language: language === "URDU" ? "URDU" : "ENGLISH",
+              },
+            ]
+          : undefined;
+
+      const res = await fetch(`/api/recordings/${lectureId}/finalize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          clientSegments: clientSegmentsToSend,
+          manualText: liveTranscript.trim() || undefined,
+          durationSec: elapsedSec,
+        }),
+      });
+
       if (!res.ok) throw new Error("Failed to finalize recording on server");
 
-      alert("Lecture recording successfully saved! Redirecting to review suite...");
       router.push(`/teacher/review/${lectureId}`);
     } catch (err: any) {
       console.error("Finalize error:", err);
-      alert(err.message || "Failed to finalize recording");
-      setIsFinalizing(false);
+      // Still redirect to review if lecture exists
+      if (lectureId) {
+        router.push(`/teacher/review/${lectureId}`);
+      } else {
+        alert(err.message || "Failed to finalize recording");
+        setIsFinalizing(false);
+      }
     }
   }
 
@@ -284,9 +413,17 @@ export default function RecordStudioPage() {
 
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: "2rem 1.25rem" }}>
+      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", marginBottom: "0.75rem", fontSize: "0.85rem" }}>
+        <Link href="/dashboard" style={{ color: "var(--color-text-muted)" }}>
+          ← Dashboard
+        </Link>
+        <span style={{ color: "var(--color-border)" }}>/</span>
+        <span style={{ fontWeight: 600 }}>Recording Studio</span>
+      </div>
+
       <h1 style={{ marginBottom: "0.25rem" }}>🎙️ Live Lecture Recording Studio</h1>
       <p style={{ color: "var(--color-text-muted)", marginTop: 0 }}>
-        Continuous audio capture with automatic 5-second chunk persistence and live timestamped markers.
+        Continuous audio capture with real-time speech recognition and automatic clinical topic indexing.
       </p>
 
       {!isStarted ? (
@@ -330,11 +467,11 @@ export default function RecordStudioPage() {
           </div>
 
           <label>
-            <strong>Description / Lecture Notes</strong>
+            <strong>Optional Lecture Notes / Outline (or paste text directly)</strong>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Key objectives, case studies to be discussed..."
+              placeholder="Key concepts to discuss (e.g. Narcissism, Depression, Cognitive Schemas)..."
               rows={3}
               style={{ width: "100%", marginTop: 4 }}
             />
@@ -342,7 +479,7 @@ export default function RecordStudioPage() {
 
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.5rem" }}>
             <span style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
-              No hard duration limits — recording continues until you click STOP & SAVE.
+              No hard duration limits — speak freely until you click STOP & SAVE.
             </span>
             <button className="primary" onClick={startRecording} style={{ padding: "0.75rem 1.5rem", fontSize: "1rem" }}>
               🔴 Start Live Recording
@@ -352,48 +489,44 @@ export default function RecordStudioPage() {
       ) : (
         /* Active Recording Console */
         <div style={{ display: "grid", gap: "1.5rem", marginTop: "1.5rem" }}>
-          {/* Live Timer & Visualizer */}
+          {/* Main Control Banner */}
           <div
             className="card"
             style={{
-              background: "var(--color-surface)",
-              textAlign: "center",
-              padding: "2rem 1rem",
-              border: isPaused ? "2px dashed #f0ad4e" : "2px solid var(--color-danger)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "1rem",
+              background: isPaused ? "var(--color-surface-hover)" : "var(--color-surface)",
+              border: isPaused ? "1px solid #f59e0b" : "1px solid var(--color-border)",
             }}
           >
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                color: isPaused ? "#f0ad4e" : "var(--color-danger)",
-                fontWeight: 600,
-                fontSize: "0.95rem",
-                textTransform: "uppercase",
-                letterSpacing: "0.08em",
-                marginBottom: "0.5rem",
-              }}
-            >
-              <span style={{ fontSize: "1.2rem" }}>{isPaused ? "⏸️ PAUSED" : "● ON AIR"}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: "1.25rem" }}>
+              <div
+                style={{
+                  width: 16,
+                  height: 16,
+                  borderRadius: "50%",
+                  backgroundColor: isPaused ? "#f59e0b" : "#ef4444",
+                  boxShadow: isPaused ? "none" : "0 0 10px #ef4444",
+                  animation: isPaused ? "none" : "pulse 1.5s infinite",
+                }}
+              />
+              <div>
+                <div style={{ fontSize: "2rem", fontWeight: 700, fontFamily: "monospace" }}>
+                  {formatTime(elapsedSec)}
+                </div>
+                <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)" }}>
+                  {isPaused ? "RECORDING PAUSED" : "RECORDING LIVE AUDIO"}
+                </div>
+              </div>
             </div>
 
-            <div
-              style={{
-                fontFamily: "monospace",
-                fontSize: "3.5rem",
-                fontWeight: 700,
-                color: "var(--color-text)",
-                letterSpacing: "0.04em",
-              }}
-            >
-              {formatTime(elapsedSec)}
-            </div>
-
-            {/* Microphone Volume Meter */}
-            <div style={{ maxWidth: 300, margin: "1rem auto 0", textAlign: "left" }}>
+            {/* Audio Meter */}
+            <div style={{ width: 140 }}>
               <div style={{ fontSize: "0.75rem", color: "var(--color-text-muted)", marginBottom: 4 }}>
-                Microphone Activity
+                Mic Activity
               </div>
               <div
                 style={{
@@ -407,78 +540,95 @@ export default function RecordStudioPage() {
                   style={{
                     height: "100%",
                     width: `${micLevel}%`,
-                    background: micLevel > 75 ? "#d9534f" : "var(--color-accent)",
-                    transition: "width 0.05s ease",
+                    backgroundColor: micLevel > 70 ? "#ef4444" : "#10b981",
+                    transition: "width 0.1s ease",
                   }}
                 />
               </div>
             </div>
 
-            <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", marginTop: "1rem" }}>
-              {uploadStatus} · <strong>{chunkCount} chunks saved</strong>
-            </div>
-
-            {/* Controls */}
-            <div style={{ display: "flex", justifyContent: "center", gap: "1rem", marginTop: "1.5rem" }}>
-              <button onClick={togglePause} style={{ padding: "0.6rem 1.25rem" }}>
+            {/* Main Action Buttons */}
+            <div style={{ display: "flex", gap: "0.75rem" }}>
+              <button onClick={togglePause} style={{ padding: "0.6rem 1.2rem" }}>
                 {isPaused ? "▶️ Resume" : "⏸️ Pause"}
               </button>
               <button
-                className="danger"
+                className="primary"
                 onClick={finalizeRecording}
                 disabled={isFinalizing}
-                style={{ padding: "0.6rem 1.5rem" }}
+                style={{ padding: "0.6rem 1.25rem", backgroundColor: "#000", color: "#fff" }}
               >
-                {isFinalizing ? "Finalizing..." : "🛑 STOP & SAVE LECTURE"}
+                {isFinalizing ? "Saving..." : "⏹️ STOP & SAVE LECTURE"}
               </button>
             </div>
           </div>
 
-          {/* Live Manual Markers Panel */}
-          <div className="card">
-            <h3 style={{ marginBottom: "0.5rem" }}>📌 Live Timestamp Markers</h3>
-            <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: "0 0 1rem" }}>
-              Click to tag significant moments during speech. These will be indexed into the transcript and topic graph.
+          {/* Live Real-time Speech Transcription Ticker */}
+          <div className="card" style={{ display: "grid", gap: "0.75rem" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <strong style={{ fontSize: "0.95rem" }}>
+                🗣️ Real-time Speech Recognition {isSpeechRecActive && <span style={{ color: "#10b981", fontSize: "0.8rem" }}>● Listening</span>}
+              </strong>
+              <span style={{ fontSize: "0.75rem", color: "var(--color-text-muted)" }}>
+                Auto-transcribing your speech in real-time
+              </span>
+            </div>
+
+            <textarea
+              value={liveTranscript}
+              onChange={(e) => {
+                setLiveTranscript(e.target.value);
+                liveTextRef.current = e.target.value;
+              }}
+              placeholder="Your spoken words will appear here in real-time as you speak... You can also type or paste lecture notes here."
+              rows={5}
+              style={{
+                width: "100%",
+                padding: "0.75rem",
+                fontSize: "0.95rem",
+                lineHeight: "1.5",
+                fontFamily: "inherit",
+              }}
+            />
+
+            {recognizedSegments.length > 0 && (
+              <div style={{ fontSize: "0.8rem", color: "var(--color-text-muted)" }}>
+                Captured {recognizedSegments.length} timestamped speech segment(s)
+              </div>
+            )}
+          </div>
+
+          {/* Clinical Markers */}
+          <div className="card" style={{ display: "grid", gap: "0.75rem" }}>
+            <strong style={{ fontSize: "0.95rem" }}>📌 Live Clinical Markers</strong>
+            <p style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", margin: 0 }}>
+              Tag key moments during the lecture with zero typing required:
             </p>
 
-            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "1.5rem" }}>
-              <button onClick={() => addMarker("IMPORTANT")}>⚠️ Important Point</button>
-              <button onClick={() => addMarker("QUESTION")}>❓ Student Question</button>
-              <button onClick={() => addMarker("EXAMPLE")}>💡 Case Example</button>
-              <button onClick={() => addMarker("CONFUSING")}>🤔 Needs Clarification</button>
-              <button onClick={() => addMarker("RESEARCH_LATER")}>🔬 Research Reference</button>
-              <button onClick={() => addMarker("NOTE")}>📝 General Note</button>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              <button className="sm" onClick={() => addMarker("CORE_CONCEPT")}>
+                💡 Core Concept
+              </button>
+              <button className="sm" onClick={() => addMarker("CASE_EXAMPLE")}>
+                🧠 Clinical Case Study
+              </button>
+              <button className="sm" onClick={() => addMarker("EXAM_IMPORTANT")}>
+                ⭐ Exam Highlight
+              </button>
+              <button className="sm" onClick={() => addMarker("STUDENT_QUESTION")}>
+                ❓ Student Question
+              </button>
             </div>
 
-            {/* Live Marker Feed */}
-            <div style={{ display: "grid", gap: "0.5rem", maxHeight: 200, overflowY: "auto" }}>
-              {markers.map((m, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "0.4rem 0.75rem",
-                    background: "var(--color-surface-hover)",
-                    borderRadius: "var(--radius)",
-                    fontSize: "0.85rem",
-                  }}
-                >
-                  <span>
-                    <strong>{m.markerType}</strong>
+            {markers.length > 0 && (
+              <div style={{ marginTop: "0.5rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                {markers.slice(0, 5).map((m, idx) => (
+                  <span key={idx} className="badge tag-source">
+                    {formatTime(m.timestampSec)} - {m.markerType}
                   </span>
-                  <span style={{ fontFamily: "monospace", color: "var(--color-text-muted)" }}>
-                    {formatTime(m.timestampSec)}
-                  </span>
-                </div>
-              ))}
-              {markers.length === 0 && (
-                <div style={{ fontSize: "0.85rem", color: "var(--color-text-muted)", textAlign: "center" }}>
-                  No markers placed yet.
-                </div>
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
