@@ -358,8 +358,36 @@ export default function TeacherReviewPage() {
     return `${m}:${String(s).padStart(2, "0")}`;
   }
 
-  if (loading) return <main style={{ padding: "2rem" }}>Loading Lecture Review...</main>;
-  if (!lecture) return <main style={{ padding: "2rem" }}>Lecture not found</main>;
+  if (loading) {
+    return (
+      <main style={{ maxWidth: 800, margin: "0 auto", padding: "4rem 1.5rem", textAlign: "center" }}>
+        <h3>Loading Lecture Review Studio...</h3>
+        <p style={{ color: "var(--color-text-muted)" }}>Fetching lecture transcript, audio stream, and AI analysis.</p>
+      </main>
+    );
+  }
+
+  if (!lecture) {
+    return (
+      <main style={{ maxWidth: 700, margin: "0 auto", padding: "4rem 1.5rem", textAlign: "center" }}>
+        <div className="card" style={{ padding: "2.5rem 1.5rem" }}>
+          <h2>Lecture Not Available</h2>
+          <p style={{ color: "var(--color-text-muted)", margin: "0.75rem 0 1.5rem" }}>
+            This lecture may have been removed or the connection was interrupted.
+          </p>
+          <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+            <button className="primary" onClick={() => loadData()}>🔄 Retry Loading</button>
+            <Link href="/lectures">
+              <button>📚 Browse Archive</button>
+            </Link>
+            <Link href="/dashboard">
+              <button>🏠 Dashboard</button>
+            </Link>
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   const isPublished = lecture.status === "PUBLISHED";
 

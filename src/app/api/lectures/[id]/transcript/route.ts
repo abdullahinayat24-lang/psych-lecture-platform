@@ -9,12 +9,16 @@ export const dynamic = "force-dynamic";
 // GET /api/lectures/:id/transcript — structured, timestamped segments.
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser();
-
     const lecture = await prisma.lecture.findUnique({ where: { id: params.id } });
     if (!lecture) throw new ApiError(404, "Lecture not found");
-    if (user.role === "STUDENT" && lecture.status !== "PUBLISHED") {
-      throw new ApiError(404, "Lecture not found");
+
+    try {
+      const user = await requireUser();
+      if (user.role === "STUDENT" && lecture.status !== "PUBLISHED") {
+        throw new ApiError(403, "Lecture is not published yet");
+      }
+    } catch (e: any) {
+      if (e instanceof ApiError && e.status === 403) throw e;
     }
 
     const segments = await prisma.transcriptSegment.findMany({
