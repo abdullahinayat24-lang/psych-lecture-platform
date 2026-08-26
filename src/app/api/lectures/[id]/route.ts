@@ -4,10 +4,14 @@ import { prisma } from "@/lib/db";
 import { requireUser, requireTeacher, ApiError, handleApiError } from "@/lib/rbac";
 import { logAudit } from "@/lib/audit";
 
+export const dynamic = "force-dynamic";
+
 const updateLectureSchema = z.object({
   title: z.string().min(1).max(300).optional(),
   description: z.string().max(5000).optional(),
   category: z.string().max(120).optional(),
+  seriesName: z.string().max(300).nullable().optional(),
+  partNumber: z.number().int().nullable().optional(),
   status: z
     .enum(["DRAFT", "RECORDING", "PROCESSING", "AI_ANALYZED", "IN_REVIEW", "PUBLISHED", "UNPUBLISHED"])
     .optional(),
@@ -28,7 +32,6 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
     if (!lecture) throw new ApiError(404, "Lecture not found");
 
-    // Students may never fetch unpublished lectures, even by direct ID (IDOR protection).
     if (user.role === "STUDENT" && lecture.status !== "PUBLISHED") {
       throw new ApiError(404, "Lecture not found");
     }
@@ -80,7 +83,25 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
     const existing = await prisma.lecture.findUnique({ where: { id: params.id } });
     if (!existing) throw new ApiError(404, "Lecture not found");
 
-    await prisma.lecture.delete({ where: { id: params.id } });
+    // Clean up all related child entities explicitly to prevent any FK constraint violations
+    await prisma.$transaction([
+      prisma.lectureImage.deleteMany({ where: { lectureId: params.id } }),
+      prisma.topicOccurrence.deleteMany({ where: { lectureId: params.id } }),
+      prisma.lectureTopic.deleteMany({ where: { lectureId: params.id } }),
+      prisma.aiAnalysis.deleteMany({ where: { lectureId: params.id } }),
+      prisma.lectureSummary.deleteMany({ where: { lectureId: params.id } }),
+      prisma.manualMarker.deleteMany({ where: { lectureId: params.id } }),
+      prisma.studentConfusion.deleteMany({ where: { lectureId: params.id } }),
+      prisma.studentQuestion.deleteMany({ where: { lectureId: params.id } }),
+      prisma.studentNote.deleteMany({ where: { lectureId: params.id } }),
+      prisma.bookmark.deleteMany({ where: { lectureId: params.id } }),
+      prisma.highlight.deleteMany({ where: { lectureId: params.id } }),
+      prisma.transcriptSegment.deleteMany({ where: { lectureId: params.id } }),
+      prisma.speaker.deleteMany({ where: { lectureId: params.id } }),
+      prisma.recordingSegment.deleteMany({ where: { recording: { lectureId: params.id } } }),
+      prisma.lectureRecording.deleteMany({ where: { lectureId: params.id } }),
+      prisma.lecture.delete({ where: { id: params.id } }),
+    ]);
 
     await logAudit({
       actorId: user.id,
@@ -92,6 +113,7 @@ export async function DELETE(_req: Request, { params }: { params: { id: string }
 
     return NextResponse.json({ success: true });
   } catch (err) {
+    console.error("Delete lecture error:", err);
     return handleApiError(err);
   }
 }
